@@ -1,6 +1,7 @@
 import type { IncomingMessage } from "node:http";
 import { timingSafeEqual } from "node:crypto";
 import type { GatewayAuthConfig, GatewayTailscaleMode } from "../config/config.js";
+import type { AuthProvider, UserPrincipal } from "./interfaces/auth.js";
 import { readTailscaleWhoisIdentity, type TailscaleWhoisIdentity } from "../infra/tailscale.js";
 import { isTrustedProxyAddress, parseForwardedForClientIp, resolveGatewayClientIp } from "./net.js";
 export type ResolvedGatewayAuthMode = "token" | "password";
@@ -14,8 +15,8 @@ export type ResolvedGatewayAuth = {
 
 export type GatewayAuthResult = {
   ok: boolean;
-  method?: "token" | "password" | "tailscale" | "device-token";
-  user?: string;
+  method?: "token" | "password" | "tailscale" | "device-token" | "provider";
+  user?: string | UserPrincipal;
   reason?: string;
 };
 
@@ -237,12 +238,30 @@ export function assertGatewayAuthConfigured(auth: ResolvedGatewayAuth): void {
 
 export async function authorizeGatewayConnect(params: {
   auth: ResolvedGatewayAuth;
-  connectAuth?: ConnectAuth | null;
-  req?: IncomingMessage;
-  trustedProxies?: string[];
+  connectAuth: { token?: string | null; password?: string | null } | null | undefined;
+  req: IncomingMessage;
+  trustedProxies: string[];
   tailscaleWhois?: TailscaleWhoisLookup;
+  authProvider?: AuthProvider;
 }): Promise<GatewayAuthResult> {
-  const { auth, connectAuth, req, trustedProxies } = params;
+  const { auth, connectAuth, req, trustedProxies, authProvider } = params;
+
+  // 1. If an AuthProvider is configured, try it first.
+  if (authProvider) {
+    try {
+      const user = await authProvider.validate(req);
+      if (user) {
+        return { ok: true, method: "provider", user };
+      }
+      return { ok: false, reason: "provider_rejected" };
+    } catch (err) {
+      return { ok: false, reason: "provider_error" };
+    }
+  }
+
+  // Legacy Logic below (preserved for now if no provider passed, though strictly server.impl.ts always passes one now?)
+  // Actually server.impl.ts passes one, but existing tests might not.
+
   const tailscaleWhois = params.tailscaleWhois ?? readTailscaleWhoisIdentity;
   const localDirect = isLocalDirectRequest(req, trustedProxies);
 

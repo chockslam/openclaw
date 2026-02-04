@@ -3,7 +3,8 @@ import type { OpenClawConfig } from "../../config/config.js";
 import { resolveUserTimezone } from "../../agents/date-time.js";
 import { buildWorkspaceSkillSnapshot } from "../../agents/skills.js";
 import { ensureSkillsWatcher, getSkillsSnapshotVersion } from "../../agents/skills/refresh.js";
-import { type SessionEntry, updateSessionStore } from "../../config/sessions.js";
+import { type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { buildChannelSummary } from "../../infra/channel-summary.js";
 import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
 import { drainSystemEventEntries } from "../../infra/system-events.js";
@@ -211,7 +212,7 @@ export async function ensureSkillSnapshot(params: {
     };
     sessionStore[sessionKey] = { ...sessionStore[sessionKey], ...nextEntry };
     if (storePath) {
-      await updateSessionStore(storePath, (store) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
         store[sessionKey] = { ...store[sessionKey], ...nextEntry };
       });
     }
@@ -253,7 +254,7 @@ export async function ensureSkillSnapshot(params: {
     };
     sessionStore[sessionKey] = { ...sessionStore[sessionKey], ...nextEntry };
     if (storePath) {
-      await updateSessionStore(storePath, (store) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
         store[sessionKey] = { ...store[sessionKey], ...nextEntry };
       });
     }
@@ -304,7 +305,7 @@ export async function incrementCompactionCount(params: {
     ...updates,
   };
   if (storePath) {
-    await updateSessionStore(storePath, (store) => {
+    await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       store[sessionKey] = {
         ...store[sessionKey],
         ...updates,

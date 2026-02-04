@@ -3,12 +3,12 @@ import path from "node:path";
 import { resolveQueueSettings } from "../auto-reply/reply/queue.js";
 import { loadConfig } from "../config/config.js";
 import {
-  loadSessionStore,
   resolveAgentIdFromSessionKey,
   resolveMainSessionKey,
   resolveStorePath,
 } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { normalizeMainKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
 import {
@@ -90,7 +90,7 @@ async function waitForSessionUsage(params: { sessionKey: string }) {
   const cfg = loadConfig();
   const agentId = resolveAgentIdFromSessionKey(params.sessionKey);
   const storePath = resolveStorePath(cfg.session?.store, { agentId });
-  let entry = loadSessionStore(storePath)[params.sessionKey];
+  let entry = getSessionStoreBridge().loadSessionStore(storePath)[params.sessionKey];
   if (!entry) {
     return { entry, storePath };
   }
@@ -104,7 +104,7 @@ async function waitForSessionUsage(params: { sessionKey: string }) {
   }
   for (let attempt = 0; attempt < 4; attempt += 1) {
     await new Promise((resolve) => setTimeout(resolve, 200));
-    entry = loadSessionStore(storePath)[params.sessionKey];
+    entry = getSessionStoreBridge().loadSessionStore(storePath)[params.sessionKey];
     if (hasTokens()) {
       break;
     }
@@ -172,7 +172,7 @@ function loadRequesterSessionEntry(requesterSessionKey: string) {
   const canonicalKey = resolveRequesterStoreKey(cfg, requesterSessionKey);
   const agentId = resolveAgentIdFromSessionKey(canonicalKey);
   const storePath = resolveStorePath(cfg.session?.store, { agentId });
-  const store = loadSessionStore(storePath);
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   const entry = store[canonicalKey];
   return { cfg, entry, canonicalKey };
 }

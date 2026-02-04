@@ -5,6 +5,7 @@ import type { CronService } from "../../cron/service.js";
 import type { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { WizardSession } from "../../wizard/session.js";
 import type { ChatAbortControllerEntry } from "../chat-abort.js";
+import type { SecretsProvider } from "../interfaces/secrets.js";
 import type { NodeRegistry } from "../node-registry.js";
 import type { ConnectParams, ErrorShape, RequestFrame } from "../protocol/index.js";
 import type { ChannelRuntimeSnapshot } from "../server-channels.js";
@@ -54,12 +55,18 @@ export type GatewayRequestContext = {
   chatAbortedRuns: Map<string, number>;
   chatRunBuffers: Map<string, string>;
   chatDeltaSentAt: Map<string, number>;
-  addChatRun: (sessionId: string, entry: { sessionKey: string; clientRunId: string }) => void;
+  addChatRun: (
+    sessionId: string,
+    entry: { sessionKey: string; clientRunId: string },
+  ) => Promise<void> | void;
   removeChatRun: (
     sessionId: string,
     clientRunId: string,
     sessionKey?: string,
-  ) => { sessionKey: string; clientRunId: string } | undefined;
+  ) =>
+    | Promise<{ sessionKey: string; clientRunId: string } | undefined>
+    | { sessionKey: string; clientRunId: string }
+    | undefined;
   dedupe: Map<string, DedupeEntry>;
   wizardSessions: Map<string, WizardSession>;
   findRunningWizard: () => string | null;
@@ -84,6 +91,7 @@ export type GatewayRequestContext = {
     prompter: import("../../wizard/prompts.js").WizardPrompter,
   ) => Promise<void>;
   broadcastVoiceWakeChanged: (triggers: string[]) => void;
+  secretsProvider?: SecretsProvider;
 };
 
 export type GatewayRequestOptions = {

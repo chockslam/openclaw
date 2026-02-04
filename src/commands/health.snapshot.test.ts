@@ -19,6 +19,12 @@ vi.mock("../config/config.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../gateway/session-store-bridge.js", () => ({
+  getSessionStoreBridge: () => ({
+    loadSessionStore: () => testStore,
+  }),
+}));
+
 vi.mock("../config/sessions.js", () => ({
   resolveStorePath: () => "/tmp/sessions.json",
   loadSessionStore: () => testStore,

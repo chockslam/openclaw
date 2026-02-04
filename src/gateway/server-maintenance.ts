@@ -34,7 +34,7 @@ export function startGatewayMaintenanceTimers(params: {
     sessionId: string,
     clientRunId: string,
     sessionKey?: string,
-  ) => ChatRunEntry | undefined;
+  ) => Promise<ChatRunEntry | undefined> | ChatRunEntry | undefined;
   agentRunSeq: Map<string, number>;
   nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
 }): {
@@ -86,24 +86,32 @@ export function startGatewayMaintenanceTimers(params: {
       }
     }
 
+    const abortPromises: Promise<unknown>[] = [];
     for (const [runId, entry] of params.chatAbortControllers) {
       if (now <= entry.expiresAtMs) {
         continue;
       }
-      abortChatRunById(
-        {
-          chatAbortControllers: params.chatAbortControllers,
-          chatRunBuffers: params.chatRunBuffers,
-          chatDeltaSentAt: params.chatDeltaSentAt,
-          chatAbortedRuns: params.chatRunState.abortedRuns,
-          removeChatRun: params.removeChatRun,
-          agentRunSeq: params.agentRunSeq,
-          broadcast: params.broadcast,
-          nodeSendToSession: params.nodeSendToSession,
-        },
-        { runId, sessionKey: entry.sessionKey, stopReason: "timeout" },
+      abortPromises.push(
+        abortChatRunById(
+          {
+            chatAbortControllers: params.chatAbortControllers,
+            chatRunBuffers: params.chatRunBuffers,
+            chatDeltaSentAt: params.chatDeltaSentAt,
+            chatAbortedRuns: params.chatRunState.abortedRuns,
+            removeChatRun: params.removeChatRun,
+            agentRunSeq: params.agentRunSeq,
+            broadcast: params.broadcast,
+            nodeSendToSession: params.nodeSendToSession,
+          },
+          { runId, sessionKey: entry.sessionKey, stopReason: "timeout" },
+        ).catch((err) => {
+          params.logHealth.error(`abort timed out run failed: ${formatError(err)}`);
+        }),
       );
     }
+    // We don't await the batch to avoid blocking the interval, but we catch errors individualy above.
+    // However, if we want to throttle, we could await. Main loop won't block other async tasks.
+    // For now fire-and-forget logic is fine.
 
     const ABORTED_RUN_TTL_MS = 60 * 60_000;
     for (const [runId, abortedAt] of params.chatRunState.abortedRuns) {

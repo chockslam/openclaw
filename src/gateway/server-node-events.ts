@@ -3,11 +3,11 @@ import type { NodeEvent, NodeEventContext } from "./server-node-events-types.js"
 import { normalizeChannelId } from "../channels/plugins/index.js";
 import { agentCommand } from "../commands/agent.js";
 import { loadConfig } from "../config/config.js";
-import { updateSessionStore } from "../config/sessions.js";
 import { requestHeartbeatNow } from "../infra/heartbeat-wake.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
 import { normalizeMainKey } from "../routing/session-key.js";
 import { defaultRuntime } from "../runtime.js";
+import { getSessionStoreBridge } from "./session-store-bridge.js";
 import { loadSessionEntry } from "./session-utils.js";
 import { formatForLog } from "./ws-log.js";
 
@@ -40,7 +40,7 @@ export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt
       const now = Date.now();
       const sessionId = entry?.sessionId ?? randomUUID();
       if (storePath) {
-        await updateSessionStore(storePath, (store) => {
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
           store[canonicalKey] = {
             sessionId,
             updatedAt: now,
@@ -57,7 +57,8 @@ export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt
 
       // Ensure chat UI clients refresh when this run completes (even though it wasn't started via chat.send).
       // This maps agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
-      ctx.addChatRun(sessionId, {
+      // This maps agent bus events (keyed by sessionId) to chat events (keyed by clientRunId).
+      await ctx.addChatRun(sessionId, {
         sessionKey,
         clientRunId: `voice-${randomUUID()}`,
       });
@@ -117,7 +118,7 @@ export const handleNodeEvent = async (ctx: NodeEventContext, nodeId: string, evt
       const now = Date.now();
       const sessionId = entry?.sessionId ?? randomUUID();
       if (storePath) {
-        await updateSessionStore(storePath, (store) => {
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
           store[canonicalKey] = {
             sessionId,
             updatedAt: now,

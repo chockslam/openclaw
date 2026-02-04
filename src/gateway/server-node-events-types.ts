@@ -12,12 +12,12 @@ export type NodeEventContext = {
   nodeSubscribe: (nodeId: string, sessionKey: string) => void;
   nodeUnsubscribe: (nodeId: string, sessionKey: string) => void;
   broadcastVoiceWakeChanged: (triggers: string[]) => void;
-  addChatRun: (sessionId: string, entry: ChatRunEntry) => void;
+  addChatRun: (sessionId: string, entry: ChatRunEntry) => Promise<void> | void;
   removeChatRun: (
     sessionId: string,
     clientRunId: string,
     sessionKey?: string,
-  ) => ChatRunEntry | undefined;
+  ) => Promise<ChatRunEntry | undefined> | ChatRunEntry | undefined;
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
   chatAbortedRuns: Map<string, number>;
   chatRunBuffers: Map<string, string>;

@@ -11,8 +11,9 @@ import {
   sanitizeTextContent,
   stripToolMessages,
 } from "../../agents/tools/sessions-helpers.js";
-import { loadSessionStore, resolveStorePath, updateSessionStore } from "../../config/sessions.js";
+import { resolveStorePath } from "../../config/sessions.js";
 import { callGateway } from "../../gateway/call.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { INTERNAL_MESSAGE_CHANNEL } from "../../utils/message-channel.js";
@@ -165,7 +166,7 @@ function formatLogLines(messages: ChatMessage[]) {
 function loadSubagentSessionEntry(params: Parameters<CommandHandler>[0], childKey: string) {
   const parsed = parseAgentSessionKey(childKey);
   const storePath = resolveStorePath(params.cfg.session?.store, { agentId: parsed?.agentId });
-  const store = loadSessionStore(storePath);
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   return { storePath, store, entry: store[childKey] };
 }
 
@@ -270,7 +271,7 @@ export const handleSubagentsCommand: CommandHandler = async (params, allowTextCo
       entry.abortedLastRun = true;
       entry.updatedAt = Date.now();
       store[childKey] = entry;
-      await updateSessionStore(storePath, (nextStore) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (nextStore) => {
         nextStore[childKey] = entry;
       });
     }

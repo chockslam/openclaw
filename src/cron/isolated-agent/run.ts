@@ -41,7 +41,8 @@ import {
   supportsXHighThinking,
 } from "../../auto-reply/thinking.js";
 import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
-import { resolveSessionTranscriptPath, updateSessionStore } from "../../config/sessions.js";
+import { resolveSessionTranscriptPath } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
 import { getRemoteSkillEligibility } from "../../infra/skills-remote.js";
@@ -305,7 +306,7 @@ export async function runCronIsolatedAgentTurn(params: {
       skillsSnapshot,
     };
     cronSession.store[agentSessionKey] = cronSession.sessionEntry;
-    await updateSessionStore(cronSession.storePath, (store) => {
+    await getSessionStoreBridge().updateSessionStore(cronSession.storePath, (store) => {
       store[agentSessionKey] = cronSession.sessionEntry;
     });
   }
@@ -313,7 +314,7 @@ export async function runCronIsolatedAgentTurn(params: {
   // Persist systemSent before the run, mirroring the inbound auto-reply behavior.
   cronSession.sessionEntry.systemSent = true;
   cronSession.store[agentSessionKey] = cronSession.sessionEntry;
-  await updateSessionStore(cronSession.storePath, (store) => {
+  await getSessionStoreBridge().updateSessionStore(cronSession.storePath, (store) => {
     store[agentSessionKey] = cronSession.sessionEntry;
   });
 
@@ -411,7 +412,7 @@ export async function runCronIsolatedAgentTurn(params: {
         promptTokens > 0 ? promptTokens : (usage.total ?? input);
     }
     cronSession.store[agentSessionKey] = cronSession.sessionEntry;
-    await updateSessionStore(cronSession.storePath, (store) => {
+    await getSessionStoreBridge().updateSessionStore(cronSession.storePath, (store) => {
       store[agentSessionKey] = cronSession.sessionEntry;
     });
   }

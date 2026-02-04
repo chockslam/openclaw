@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { createAgentEventHandler, createChatRunState } from "./server-chat.js";
 
 describe("agent event handler", () => {
-  it("emits chat delta for assistant text-only events", () => {
+  it("emits chat delta for assistant text-only events", async () => {
     const nowSpy = vi.spyOn(Date, "now").mockReturnValue(1_000);
     const broadcast = vi.fn();
     const nodeSendToSession = vi.fn();
     const agentRunSeq = new Map<string, number>();
     const chatRunState = createChatRunState();
-    chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
+    await chatRunState.registry.add("run-1", { sessionKey: "session-1", clientRunId: "client-1" });
 
     const handler = createAgentEventHandler({
       broadcast,
@@ -19,7 +19,7 @@ describe("agent event handler", () => {
       clearAgentRunContext: vi.fn(),
     });
 
-    handler({
+    await handler({
       runId: "run-1",
       seq: 1,
       stream: "assistant",

@@ -5,7 +5,8 @@ import type {
 } from "../config/types.approvals.js";
 import type { ExecApprovalDecision } from "./exec-approvals.js";
 import { loadConfig } from "../config/config.js";
-import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
+import { resolveStorePath } from "../config/sessions.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { parseAgentSessionKey } from "../routing/session-key.js";
 import { isDeliverableMessageChannel, normalizeMessageChannel } from "../utils/message-channel.js";
@@ -170,7 +171,7 @@ function defaultResolveSessionTarget(params: {
   const parsed = parseAgentSessionKey(sessionKey);
   const agentId = parsed?.agentId ?? params.request.request.agentId ?? "main";
   const storePath = resolveStorePath(params.cfg.session?.store, { agentId });
-  const store = loadSessionStore(storePath);
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   const entry = store[sessionKey];
   if (!entry) {
     return null;

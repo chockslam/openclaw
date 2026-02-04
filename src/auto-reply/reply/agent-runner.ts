@@ -6,7 +6,7 @@ import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { TypingController } from "./typing.js";
 import { lookupContextTokens } from "../../agents/context.js";
 import { DEFAULT_CONTEXT_TOKENS } from "../../agents/defaults.js";
-import { resolveModelAuthMode } from "../../agents/model-auth.js";
+import { resolveModelAuthMode, resolveModelAuthModeAsync } from "../../agents/model-auth.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { queueEmbeddedPiMessage } from "../../agents/pi-embedded.js";
 import { hasNonzeroUsage } from "../../agents/usage.js";
@@ -15,9 +15,8 @@ import {
   resolveSessionFilePath,
   resolveSessionTranscriptPath,
   type SessionEntry,
-  updateSessionStore,
-  updateSessionStoreEntry,
 } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { defaultRuntime } from "../../runtime.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../../utils/usage-format.js";
@@ -167,10 +166,11 @@ export async function runReplyAgent(params: {
         activeSessionEntry.updatedAt = updatedAt;
         activeSessionStore[sessionKey] = activeSessionEntry;
         if (storePath) {
-          await updateSessionStoreEntry({
-            storePath,
-            sessionKey,
-            update: async () => ({ updatedAt }),
+          await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
+            const current = store[sessionKey];
+            if (current) {
+              store[sessionKey] = { ...current, updatedAt };
+            }
           });
         }
       }
@@ -186,10 +186,11 @@ export async function runReplyAgent(params: {
       activeSessionEntry.updatedAt = updatedAt;
       activeSessionStore[sessionKey] = activeSessionEntry;
       if (storePath) {
-        await updateSessionStoreEntry({
-          storePath,
-          sessionKey,
-          update: async () => ({ updatedAt }),
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
+          const current = store[sessionKey];
+          if (current) {
+            store[sessionKey] = { ...current, updatedAt };
+          }
         });
       }
     }
@@ -262,7 +263,7 @@ export async function runReplyAgent(params: {
     nextEntry.sessionFile = nextSessionFile;
     activeSessionStore[sessionKey] = nextEntry;
     try {
-      await updateSessionStore(storePath, (store) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
         store[sessionKey] = nextEntry;
       });
     } catch (err) {
@@ -350,13 +351,15 @@ export async function runReplyAgent(params: {
       activeSessionEntry.updatedAt = updatedAt;
       activeSessionStore[sessionKey] = activeSessionEntry;
       if (storePath) {
-        await updateSessionStoreEntry({
-          storePath,
-          sessionKey,
-          update: async () => ({
-            groupActivationNeedsSystemIntro: false,
-            updatedAt,
-          }),
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
+          const current = store[sessionKey];
+          if (current) {
+            store[sessionKey] = {
+              ...current,
+              groupActivationNeedsSystemIntro: false,
+              updatedAt,
+            };
+          }
         });
       }
     }
@@ -469,7 +472,12 @@ export async function runReplyAgent(params: {
       (sessionKey ? activeSessionStore?.[sessionKey]?.responseUsage : undefined);
     const responseUsageMode = resolveResponseUsageMode(responseUsageRaw);
     if (responseUsageMode !== "off" && hasNonzeroUsage(usage)) {
-      const authMode = resolveModelAuthMode(providerUsed, cfg);
+      const authMode = await resolveModelAuthModeAsync(
+        providerUsed,
+        cfg,
+        undefined,
+        opts?.secretsProvider,
+      );
       const showCost = authMode === "api-key";
       const costConfig = showCost
         ? resolveModelCostConfig({

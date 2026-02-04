@@ -7,12 +7,8 @@ import {
   resolveInternalSessionKey,
   resolveMainSessionAlias,
 } from "../../agents/tools/sessions-helpers.js";
-import {
-  loadSessionStore,
-  resolveStorePath,
-  type SessionEntry,
-  updateSessionStore,
-} from "../../config/sessions.js";
+import { resolveStorePath, type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { parseAgentSessionKey } from "../../routing/session-key.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
@@ -114,7 +110,7 @@ export function stopSubagentsForRequester(params: {
     const storePath = resolveStorePath(params.cfg.session?.store, { agentId: parsed?.agentId });
     let store = storeCache.get(storePath);
     if (!store) {
-      store = loadSessionStore(storePath);
+      store = getSessionStoreBridge().loadSessionStore(storePath);
       storeCache.set(storePath, store);
     }
     const entry = store[childKey];
@@ -167,7 +163,7 @@ export async function tryFastAbortFromMessage(params: {
 
   if (targetKey) {
     const storePath = resolveStorePath(cfg.session?.store, { agentId });
-    const store = loadSessionStore(storePath);
+    const store = getSessionStoreBridge().loadSessionStore(storePath);
     const { entry, key } = resolveSessionEntryForKey(store, targetKey);
     const sessionId = entry?.sessionId;
     const aborted = sessionId ? abortEmbeddedPiRun(sessionId) : false;
@@ -181,7 +177,7 @@ export async function tryFastAbortFromMessage(params: {
       entry.abortedLastRun = true;
       entry.updatedAt = Date.now();
       store[key] = entry;
-      await updateSessionStore(storePath, (nextStore) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (nextStore) => {
         const nextEntry = nextStore[key] ?? entry;
         if (!nextEntry) {
           return;

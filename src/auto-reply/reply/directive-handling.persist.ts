@@ -15,7 +15,8 @@ import {
   resolveDefaultModelForAgent,
   resolveModelRefFromString,
 } from "../../agents/model-selection.js";
-import { type SessionEntry, updateSessionStore } from "../../config/sessions.js";
+import { type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { enqueueSystemEvent } from "../../infra/system-events.js";
 import { applyVerboseOverride } from "../../sessions/level-overrides.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
@@ -199,7 +200,7 @@ export async function persistInlineDirectives(params: {
       sessionEntry.updatedAt = Date.now();
       sessionStore[sessionKey] = sessionEntry;
       if (storePath) {
-        await updateSessionStore(storePath, (store) => {
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
           store[sessionKey] = sessionEntry;
         });
       }

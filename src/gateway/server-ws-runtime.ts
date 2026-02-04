@@ -1,6 +1,8 @@
 import type { WebSocketServer } from "ws";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
+import type { AuthProvider } from "./interfaces/auth.js";
+import type { SecretsProvider } from "./interfaces/secrets.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./server-methods/types.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
 import { attachGatewayWsConnectionHandler } from "./server/ws-connection.js";
@@ -13,6 +15,8 @@ export function attachGatewayWsHandlers(params: {
   canvasHostEnabled: boolean;
   canvasHostServerPort?: number;
   resolvedAuth: ResolvedGatewayAuth;
+  authProvider?: AuthProvider;
+  secretsProvider?: SecretsProvider;
   gatewayMethods: string[];
   events: string[];
   logGateway: ReturnType<typeof createSubsystemLogger>;
@@ -37,6 +41,8 @@ export function attachGatewayWsHandlers(params: {
     canvasHostEnabled: params.canvasHostEnabled,
     canvasHostServerPort: params.canvasHostServerPort,
     resolvedAuth: params.resolvedAuth,
+    authProvider: params.authProvider,
+    secretsProvider: params.secretsProvider,
     gatewayMethods: params.gatewayMethods,
     events: params.events,
     logGateway: params.logGateway,

@@ -2,6 +2,8 @@ import type { WebSocket, WebSocketServer } from "ws";
 import { randomUUID } from "node:crypto";
 import type { createSubsystemLogger } from "../../logging/subsystem.js";
 import type { ResolvedGatewayAuth } from "../auth.js";
+import type { AuthProvider } from "../interfaces/auth.js";
+import type { SecretsProvider } from "../interfaces/secrets.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "../server-methods/types.js";
 import type { GatewayWsClient } from "./ws-types.js";
 import { resolveCanvasHostUrl } from "../../infra/canvas-host-url.js";
@@ -24,6 +26,8 @@ export function attachGatewayWsConnectionHandler(params: {
   canvasHostEnabled: boolean;
   canvasHostServerPort?: number;
   resolvedAuth: ResolvedGatewayAuth;
+  authProvider?: AuthProvider;
+  secretsProvider?: SecretsProvider;
   gatewayMethods: string[];
   events: string[];
   logGateway: SubsystemLogger;
@@ -48,6 +52,8 @@ export function attachGatewayWsConnectionHandler(params: {
     canvasHostEnabled,
     canvasHostServerPort,
     resolvedAuth,
+    authProvider,
+    secretsProvider,
     gatewayMethods,
     events,
     logGateway,
@@ -240,6 +246,8 @@ export function attachGatewayWsConnectionHandler(params: {
       canvasHostUrl,
       connectNonce,
       resolvedAuth,
+      authProvider,
+      secretsProvider,
       gatewayMethods,
       events,
       extraHandlers,

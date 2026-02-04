@@ -1,6 +1,10 @@
 import type { CanvasHostServer } from "../canvas-host/server.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import type { RuntimeEnv } from "../runtime.js";
+import type { AuthProvider } from "./interfaces/auth.js";
+import type { ClusterStateAdapter } from "./interfaces/cluster-state.js";
+import type { SecretsProvider } from "./interfaces/secrets.js";
+import type { StorageAdapter } from "./interfaces/storage.js";
 import type { startBrowserControlServerIfEnabled } from "./server-browser.js";
 import { resolveAgentWorkspaceDir, resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { registerSkillsChangeListener } from "../agents/skills/refresh.js";
@@ -35,6 +39,10 @@ import { scheduleGatewayUpdateCheck } from "../infra/update-startup.js";
 import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/diagnostic.js";
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
+import { EnvSecretsProvider } from "./adapters/env-secrets.js";
+import { FileStorageAdapter } from "./adapters/file-storage.js";
+import { MemoryClusterAdapter } from "./adapters/memory-cluster.js";
+import { TokenAuthProvider } from "./adapters/token-auth.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { NodeRegistry } from "./node-registry.js";
@@ -70,6 +78,7 @@ import {
   refreshGatewayHealthSnapshot,
 } from "./server/health-state.js";
 import { loadGatewayTlsRuntime } from "./server/tls.js";
+import { initializeSessionStoreBridge } from "./session-store-bridge.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
 
@@ -142,6 +151,33 @@ export type GatewayServerOptions = {
     runtime: import("../runtime.js").RuntimeEnv,
     prompter: import("../wizard/prompts.js").WizardPrompter,
   ) => Promise<void>;
+  /**
+   * Optional cluster state adapter for enterprise deployments.
+   * If not provided, defaults to MemoryClusterAdapter.
+   */
+  clusterAdapter?: ClusterStateAdapter;
+  /**
+   * Optional storage adapter for enterprise deployments.
+   * If not provided, defaults to FileStorageAdapter.
+   */
+  storageAdapter?: StorageAdapter;
+  /**
+   * Optional auth provider for enterprise deployments.
+   * If not provided, defaults to TokenAuthProvider.
+   */
+  authProvider?: AuthProvider;
+  /**
+   * Optional secrets provider for enterprise deployments.
+   * If not provided, defaults to EnvSecretsProvider.
+   */
+  secretsProvider?: SecretsProvider;
+  /**
+   * Optional Admin API handler for enterprise deployments.
+   */
+  adminHandler?: (
+    req: import("node:http").IncomingMessage,
+    res: import("node:http").ServerResponse,
+  ) => Promise<boolean>;
 };
 
 export async function startGatewayServer(
@@ -263,6 +299,7 @@ export async function startGatewayServer(
   const wizardRunner = opts.wizardRunner ?? runOnboardingWizard;
   const { wizardSessions, findRunningWizard, purgeWizardSession } = createWizardSessionTracker();
 
+  const clusterAdapter = opts.clusterAdapter ?? new MemoryClusterAdapter();
   const deps = createDefaultDeps();
   let canvasHostServer: CanvasHostServer | null = null;
   const gatewayTls = await loadGatewayTlsRuntime(cfgAtStart.gateway?.tls, log.child("tls"));
@@ -285,6 +322,8 @@ export async function startGatewayServer(
     addChatRun,
     removeChatRun,
     chatAbortControllers,
+    authProvider,
+    secretsProvider,
   } = await createGatewayRuntimeState({
     cfg: cfgAtStart,
     bindHost,
@@ -306,7 +345,16 @@ export async function startGatewayServer(
     log,
     logHooks,
     logPlugins,
+    clusterAdapter,
+    storageAdapter: opts.storageAdapter ?? new FileStorageAdapter(),
+    authProvider: opts.authProvider,
+    secretsProvider: opts.secretsProvider ?? new EnvSecretsProvider(),
+    adminHandler: opts.adminHandler,
   });
+
+  // Initialize session store bridge with the configured storage adapter
+  initializeSessionStoreBridge(opts.storageAdapter ?? new FileStorageAdapter());
+
   let bonjourStop: (() => Promise<void>) | null = null;
   const nodeRegistry = new NodeRegistry();
   const nodePresenceTimers = new Map<string, ReturnType<typeof setInterval>>();
@@ -343,7 +391,9 @@ export async function startGatewayServer(
   const { getRuntimeSnapshot, startChannels, startChannel, stopChannel, markChannelLoggedOut } =
     channelManager;
 
+  /* Removed Gateway Node Heartbeat Logic - Moved to Enterprise Entrypoint */
   const machineDisplayName = await getMachineDisplayName();
+
   const discovery = await startGatewayDiscovery({
     machineDisplayName,
     port,
@@ -431,6 +481,7 @@ export async function startGatewayServer(
     canvasHostEnabled: Boolean(canvasHost),
     canvasHostServerPort,
     resolvedAuth,
+    authProvider,
     gatewayMethods,
     events: GATEWAY_EVENTS,
     logGateway: log,
@@ -477,6 +528,7 @@ export async function startGatewayServer(
       markChannelLoggedOut,
       wizardRunner,
       broadcastVoiceWakeChanged,
+      secretsProvider,
     },
   });
   logGatewayStartup({

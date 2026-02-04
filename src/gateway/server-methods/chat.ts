@@ -237,7 +237,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       thinkingLevel,
     });
   },
-  "chat.abort": ({ params, respond, context }) => {
+  "chat.abort": async ({ params, respond, context }) => {
     if (!validateChatAbortParams(params)) {
       respond(
         false,
@@ -266,7 +266,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     };
 
     if (!runId) {
-      const res = abortChatRunsForSessionKey(ops, {
+      const res = await abortChatRunsForSessionKey(ops, {
         sessionKey,
         stopReason: "rpc",
       });
@@ -288,7 +288,7 @@ export const chatHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const res = abortChatRunById(ops, {
+    const res = await abortChatRunById(ops, {
       runId,
       sessionKey,
       stopReason: "rpc",
@@ -393,7 +393,7 @@ export const chatHandlers: GatewayRequestHandlers = {
     }
 
     if (stopCommand) {
-      const res = abortChatRunsForSessionKey(
+      const res = await abortChatRunsForSessionKey(
         {
           chatAbortControllers: context.chatAbortControllers,
           chatRunBuffers: context.chatRunBuffers,
@@ -504,6 +504,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         cfg,
         dispatcher,
         replyOptions: {
+          secretsProvider: context.secretsProvider,
           runId: clientRunId,
           abortSignal: abortController.signal,
           images: parsedImages.length > 0 ? parsedImages : undefined,

@@ -9,7 +9,7 @@ import {
   resolveModelRefFromString,
   type ModelAliasIndex,
 } from "../../agents/model-selection.js";
-import { updateSessionStore } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { formatInboundBodyWithSenderMeta } from "./inbound-sender-meta.js";
 import { resolveModelDirectiveSelection, type ModelDirectiveSelection } from "./model-selection.js";
@@ -78,11 +78,13 @@ function applySelectionToSession(params: {
   }
   sessionStore[sessionKey] = sessionEntry;
   if (storePath) {
-    updateSessionStore(storePath, (store) => {
-      store[sessionKey] = sessionEntry;
-    }).catch(() => {
-      // Ignore persistence errors; session still proceeds.
-    });
+    getSessionStoreBridge()
+      .updateSessionStore(storePath, (store) => {
+        store[sessionKey] = sessionEntry;
+      })
+      .catch(() => {
+        // Ignore persistence errors; session still proceeds.
+      });
   }
 }
 

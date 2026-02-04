@@ -8,12 +8,8 @@ import { getReplyFromConfig } from "../../auto-reply/reply.js";
 import { HEARTBEAT_TOKEN } from "../../auto-reply/tokens.js";
 import { resolveWhatsAppHeartbeatRecipients } from "../../channels/plugins/whatsapp-heartbeat.js";
 import { loadConfig } from "../../config/config.js";
-import {
-  loadSessionStore,
-  resolveSessionKey,
-  resolveStorePath,
-  updateSessionStore,
-} from "../../config/sessions.js";
+import { resolveSessionKey, resolveStorePath } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { emitHeartbeatEvent, resolveIndicatorType } from "../../infra/heartbeat-events.js";
 import { resolveHeartbeatVisibility } from "../../infra/heartbeat-visibility.js";
 import { getChildLogger } from "../../logging.js";
@@ -78,15 +74,8 @@ export async function runWebHeartbeatOnce(opts: {
   const sessionKey = resolveSessionKey(sessionScope, { From: to }, mainKey);
   if (sessionId) {
     const storePath = resolveStorePath(cfg.session?.store);
-    const store = loadSessionStore(storePath);
-    const current = store[sessionKey] ?? {};
-    store[sessionKey] = {
-      ...current,
-      sessionId,
-      updatedAt: Date.now(),
-    };
-    await updateSessionStore(storePath, (nextStore) => {
-      const nextCurrent = nextStore[sessionKey] ?? current;
+    await getSessionStoreBridge().updateSessionStore(storePath, (nextStore) => {
+      const nextCurrent = nextStore[sessionKey] ?? {};
       nextStore[sessionKey] = {
         ...nextCurrent,
         sessionId,
@@ -222,17 +211,15 @@ export async function runWebHeartbeatOnce(opts: {
     if (stripped.shouldSkip && !hasMedia) {
       // Don't let heartbeats keep sessions alive: restore previous updatedAt so idle expiry still works.
       const storePath = resolveStorePath(cfg.session?.store);
-      const store = loadSessionStore(storePath);
-      if (sessionSnapshot.entry && store[sessionSnapshot.key]) {
-        store[sessionSnapshot.key].updatedAt = sessionSnapshot.entry.updatedAt;
-        await updateSessionStore(storePath, (nextStore) => {
+      if (sessionSnapshot.entry) {
+        await getSessionStoreBridge().updateSessionStore(storePath, (nextStore) => {
           const nextEntry = nextStore[sessionSnapshot.key];
           if (!nextEntry) {
             return;
           }
           nextStore[sessionSnapshot.key] = {
             ...nextEntry,
-            updatedAt: sessionSnapshot.entry.updatedAt,
+            updatedAt: sessionSnapshot.entry?.updatedAt, // use Optional Chaining
           };
         });
       }

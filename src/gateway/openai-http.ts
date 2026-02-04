@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
+import type { AuthProvider } from "./interfaces/auth.js";
+import type { SecretsProvider } from "./interfaces/secrets.js";
 import { buildHistoryContextFromEntries, type HistoryEntry } from "../auto-reply/reply/history.js";
 import { createDefaultDeps } from "../cli/deps.js";
 import { agentCommand } from "../commands/agent.js";
@@ -18,6 +20,8 @@ import { getBearerToken, resolveAgentIdForRequest, resolveSessionKey } from "./h
 
 type OpenAiHttpOptions = {
   auth: ResolvedGatewayAuth;
+  authProvider?: AuthProvider;
+  secretsProvider?: SecretsProvider;
   maxBodyBytes?: number;
   trustedProxies?: string[];
 };
@@ -186,9 +190,10 @@ export async function handleOpenAiHttpRequest(
   const token = getBearerToken(req);
   const authResult = await authorizeGatewayConnect({
     auth: opts.auth,
+    authProvider: opts.authProvider,
     connectAuth: { token, password: token },
     req,
-    trustedProxies: opts.trustedProxies,
+    trustedProxies: opts.trustedProxies ?? [],
   });
   if (!authResult.ok) {
     sendUnauthorized(res);

@@ -58,6 +58,12 @@ vi.mock("../../utils/delivery-context.js", async () => {
   };
 });
 
+vi.mock("../session-store-bridge.js", () => ({
+  getSessionStoreBridge: () => ({
+    updateSessionStore: mocks.updateSessionStore,
+  }),
+}));
+
 const makeContext = (): GatewayRequestContext =>
   ({
     dedupe: new Map(),

@@ -211,8 +211,13 @@ export function createGatewayHttpServer(opts: {
   openResponsesConfig?: import("../config/types.gateway.js").GatewayHttpResponsesConfig;
   handleHooksRequest: HooksRequestHandler;
   handlePluginRequest?: HooksRequestHandler;
+  adminHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
   resolvedAuth: import("./auth.js").ResolvedGatewayAuth;
   tlsOptions?: TlsOptions;
+  authProvider?: import("./interfaces/auth.js").AuthProvider;
+  secretsProvider?: import("./interfaces/secrets.js").SecretsProvider;
+  storage?: import("./interfaces/storage.js").StorageAdapter;
+  cluster?: import("./interfaces/cluster-state.js").ClusterStateAdapter;
 }): HttpServer {
   const {
     canvasHost,
@@ -223,7 +228,10 @@ export function createGatewayHttpServer(opts: {
     openResponsesConfig,
     handleHooksRequest,
     handlePluginRequest,
+    adminHandler,
     resolvedAuth,
+    authProvider,
+    secretsProvider,
   } = opts;
   const httpServer: HttpServer = opts.tlsOptions
     ? createHttpsServer(opts.tlsOptions, (req, res) => {
@@ -242,12 +250,20 @@ export function createGatewayHttpServer(opts: {
     try {
       const configSnapshot = loadConfig();
       const trustedProxies = configSnapshot.gateway?.trustedProxies ?? [];
+
       if (await handleHooksRequest(req, res)) {
         return;
       }
+
+      if (adminHandler && (await adminHandler(req, res))) {
+        return;
+      }
+
       if (
         await handleToolsInvokeHttpRequest(req, res, {
           auth: resolvedAuth,
+          authProvider,
+          secretsProvider,
           trustedProxies,
         })
       ) {
@@ -263,6 +279,8 @@ export function createGatewayHttpServer(opts: {
         if (
           await handleOpenResponsesHttpRequest(req, res, {
             auth: resolvedAuth,
+            authProvider,
+            secretsProvider,
             config: openResponsesConfig,
             trustedProxies,
           })
@@ -274,6 +292,8 @@ export function createGatewayHttpServer(opts: {
         if (
           await handleOpenAiHttpRequest(req, res, {
             auth: resolvedAuth,
+            authProvider,
+            secretsProvider,
             trustedProxies,
           })
         ) {

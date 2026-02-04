@@ -2,7 +2,8 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
-import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
+import { resolveStorePath } from "../config/sessions.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { listAgentsForGateway } from "../gateway/session-utils.js";
 
 export type AgentLocalStatus = {
@@ -52,7 +53,7 @@ export async function getAgentLocalStatuses(): Promise<{
     const sessionsPath = resolveStorePath(cfg.session?.store, { agentId });
     const store = (() => {
       try {
-        return loadSessionStore(sessionsPath);
+        return getSessionStoreBridge().loadSessionStore(sessionsPath);
       } catch {
         return {};
       }

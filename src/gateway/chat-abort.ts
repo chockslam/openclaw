@@ -40,7 +40,10 @@ export type ChatAbortOps = {
     sessionId: string,
     clientRunId: string,
     sessionKey?: string,
-  ) => { sessionKey: string; clientRunId: string } | undefined;
+  ) =>
+    | Promise<{ sessionKey: string; clientRunId: string } | undefined>
+    | { sessionKey: string; clientRunId: string }
+    | undefined;
   agentRunSeq: Map<string, number>;
   broadcast: (event: string, payload: unknown, opts?: { dropIfSlow?: boolean }) => void;
   nodeSendToSession: (sessionKey: string, event: string, payload: unknown) => void;
@@ -66,14 +69,14 @@ function broadcastChatAborted(
   ops.nodeSendToSession(sessionKey, "chat", payload);
 }
 
-export function abortChatRunById(
+export async function abortChatRunById(
   ops: ChatAbortOps,
   params: {
     runId: string;
     sessionKey: string;
     stopReason?: string;
   },
-): { aborted: boolean } {
+): Promise<{ aborted: boolean }> {
   const { runId, sessionKey, stopReason } = params;
   const active = ops.chatAbortControllers.get(runId);
   if (!active) {
@@ -88,25 +91,25 @@ export function abortChatRunById(
   ops.chatAbortControllers.delete(runId);
   ops.chatRunBuffers.delete(runId);
   ops.chatDeltaSentAt.delete(runId);
-  ops.removeChatRun(runId, runId, sessionKey);
+  await ops.removeChatRun(runId, runId, sessionKey);
   broadcastChatAborted(ops, { runId, sessionKey, stopReason });
   return { aborted: true };
 }
 
-export function abortChatRunsForSessionKey(
+export async function abortChatRunsForSessionKey(
   ops: ChatAbortOps,
   params: {
     sessionKey: string;
     stopReason?: string;
   },
-): { aborted: boolean; runIds: string[] } {
+): Promise<{ aborted: boolean; runIds: string[] }> {
   const { sessionKey, stopReason } = params;
   const runIds: string[] = [];
   for (const [runId, active] of ops.chatAbortControllers) {
     if (active.sessionKey !== sessionKey) {
       continue;
     }
-    const res = abortChatRunById(ops, { runId, sessionKey, stopReason });
+    const res = await abortChatRunById(ops, { runId, sessionKey, stopReason });
     if (res.aborted) {
       runIds.push(runId);
     }

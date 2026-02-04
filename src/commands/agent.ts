@@ -42,8 +42,8 @@ import {
   resolveAgentIdFromSessionKey,
   resolveSessionFilePath,
   type SessionEntry,
-  updateSessionStore,
 } from "../config/sessions.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import {
   clearAgentRunContext,
   emitAgentEvent,
@@ -210,7 +210,7 @@ export async function agentCommand(
         skillsSnapshot,
       };
       sessionStore[sessionKey] = next;
-      await updateSessionStore(storePath, (store) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
         store[sessionKey] = next;
       });
       sessionEntry = next;
@@ -230,7 +230,7 @@ export async function agentCommand(
       }
       applyVerboseOverride(next, verboseOverride);
       sessionStore[sessionKey] = next;
-      await updateSessionStore(storePath, (store) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
         store[sessionKey] = next;
       });
     }
@@ -299,7 +299,7 @@ export async function agentCommand(
           });
           if (updated) {
             sessionStore[sessionKey] = entry;
-            await updateSessionStore(storePath, (store) => {
+            await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
               store[sessionKey] = entry;
             });
           }
@@ -364,7 +364,7 @@ export async function agentCommand(
         entry.thinkingLevel = "high";
         entry.updatedAt = Date.now();
         sessionStore[sessionKey] = entry;
-        await updateSessionStore(storePath, (store) => {
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
           store[sessionKey] = entry;
         });
       }

@@ -1,5 +1,6 @@
 import type { OpenClawConfig } from "../../config/config.js";
-import { updateSessionStore, type SessionEntry } from "../../config/sessions.js";
+import { type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import {
   ensureAuthProfileStore,
   isProfileInCooldown,
@@ -32,7 +33,7 @@ export async function clearSessionAuthProfileOverride(params: {
   sessionEntry.updatedAt = Date.now();
   sessionStore[sessionKey] = sessionEntry;
   if (storePath) {
-    await updateSessionStore(storePath, (store) => {
+    await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       store[sessionKey] = sessionEntry;
     });
   }
@@ -141,7 +142,7 @@ export async function resolveSessionAuthProfileOverride(params: {
     sessionEntry.updatedAt = Date.now();
     sessionStore[sessionKey] = sessionEntry;
     if (storePath) {
-      await updateSessionStore(storePath, (store) => {
+      await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
         store[sessionKey] = sessionEntry;
       });
     }

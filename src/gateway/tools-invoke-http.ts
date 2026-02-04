@@ -1,4 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { AuthProvider } from "./interfaces/auth.js";
+import type { SecretsProvider } from "./interfaces/secrets.js";
 import { createOpenClawTools } from "../agents/openclaw-tools.js";
 import {
   filterToolsByPolicy,
@@ -102,7 +104,13 @@ function mergeActionIntoArgsIfSupported(params: {
 export async function handleToolsInvokeHttpRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  opts: { auth: ResolvedGatewayAuth; maxBodyBytes?: number; trustedProxies?: string[] },
+  opts: {
+    auth: ResolvedGatewayAuth;
+    authProvider?: AuthProvider;
+    secretsProvider?: SecretsProvider;
+    maxBodyBytes?: number;
+    trustedProxies?: string[];
+  },
 ): Promise<boolean> {
   const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
   if (url.pathname !== "/tools/invoke") {
@@ -118,9 +126,10 @@ export async function handleToolsInvokeHttpRequest(
   const token = getBearerToken(req);
   const authResult = await authorizeGatewayConnect({
     auth: opts.auth,
+    authProvider: opts.authProvider,
     connectAuth: token ? { token, password: token } : null,
     req,
-    trustedProxies: opts.trustedProxies ?? cfg.gateway?.trustedProxies,
+    trustedProxies: opts.trustedProxies ?? cfg.gateway?.trustedProxies ?? [],
   });
   if (!authResult.ok) {
     sendUnauthorized(res);

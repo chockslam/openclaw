@@ -12,7 +12,8 @@ import {
   resolveModelRefFromString,
   resolveThinkingDefault,
 } from "../../agents/model-selection.js";
-import { type SessionEntry, updateSessionStore } from "../../config/sessions.js";
+import { type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { applyModelOverrideToSessionEntry } from "../../sessions/model-overrides.js";
 import { resolveThreadParentSessionKey } from "../../sessions/session-key-utils.js";
 
@@ -327,7 +328,7 @@ export async function createModelSelectionState(params: {
         if (updated) {
           sessionStore[sessionKey] = sessionEntry;
           if (storePath) {
-            await updateSessionStore(storePath, (store) => {
+            await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
               store[sessionKey] = sessionEntry;
             });
           }

@@ -29,7 +29,7 @@ import {
 } from "../../channel-tools.js";
 import { resolveOpenClawDocsPath } from "../../docs-path.js";
 import { isTimeoutError } from "../../failover-error.js";
-import { resolveModelAuthMode } from "../../model-auth.js";
+import { resolveModelAuthMode, resolveModelAuthModeAsync } from "../../model-auth.js";
 import { resolveDefaultModelForAgent } from "../../model-selection.js";
 import {
   isCloudCodeAssistFormatError,
@@ -232,7 +232,12 @@ export async function runEmbeddedAttempt(
           abortSignal: runAbortController.signal,
           modelProvider: params.model.provider,
           modelId: params.modelId,
-          modelAuthMode: resolveModelAuthMode(params.model.provider, params.config),
+          modelAuthMode: await resolveModelAuthModeAsync(
+            params.model.provider,
+            params.config,
+            undefined,
+            params.secretsProvider,
+          ),
           currentChannelId: params.currentChannelId,
           currentThreadTs: params.currentThreadTs,
           replyToMode: params.replyToMode,

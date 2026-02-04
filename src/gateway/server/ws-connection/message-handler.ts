@@ -3,6 +3,8 @@ import type { WebSocket } from "ws";
 import os from "node:os";
 import type { createSubsystemLogger } from "../../../logging/subsystem.js";
 import type { ResolvedGatewayAuth } from "../../auth.js";
+import type { AuthProvider } from "../../interfaces/auth.js";
+import type { SecretsProvider } from "../../interfaces/secrets.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "../../server-methods/types.js";
 import type { GatewayWsClient } from "../ws-types.js";
 import { loadConfig } from "../../../config/config.js";
@@ -142,6 +144,8 @@ export function attachGatewayWsMessageHandler(params: {
   canvasHostUrl?: string;
   connectNonce: string;
   resolvedAuth: ResolvedGatewayAuth;
+  authProvider?: AuthProvider;
+  secretsProvider?: SecretsProvider;
   gatewayMethods: string[];
   events: string[];
   extraHandlers: GatewayRequestHandlers;
@@ -172,6 +176,7 @@ export function attachGatewayWsMessageHandler(params: {
     canvasHostUrl,
     connectNonce,
     resolvedAuth,
+    authProvider,
     gatewayMethods,
     events,
     extraHandlers,
@@ -380,6 +385,7 @@ export function attachGatewayWsMessageHandler(params: {
 
         const authResult = await authorizeGatewayConnect({
           auth: resolvedAuth,
+          authProvider,
           connectAuth: connectParams.auth,
           req: upgradeReq,
           trustedProxies,

@@ -38,6 +38,13 @@ vi.mock("./tools/agent-step.js", () => ({
   readLatestAssistantReply: vi.fn(async () => "raw subagent reply"),
 }));
 
+vi.mock("../gateway/session-store-bridge.js", () => ({
+  getSessionStoreBridge: () => ({
+    loadSessionStore: () => sessionStore,
+    updateSessionStore: vi.fn(),
+  }),
+}));
+
 vi.mock("../config/sessions.js", () => ({
   loadSessionStore: vi.fn(() => sessionStore),
   resolveAgentIdFromSessionKey: () => "main",

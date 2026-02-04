@@ -39,6 +39,7 @@ export type GetReplyOptions = {
   skillFilter?: string[];
   /** Mutable ref to track if a reply was sent (for Slack "first" threading mode). */
   hasRepliedRef?: { value: boolean };
+  secretsProvider?: { getSecret: (key: string) => Promise<string | null> };
 };
 
 export type ReplyPayload = {

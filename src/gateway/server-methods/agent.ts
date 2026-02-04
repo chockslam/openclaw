@@ -8,7 +8,6 @@ import {
   resolveExplicitAgentSessionKey,
   resolveAgentMainSessionKey,
   type SessionEntry,
-  updateSessionStore,
 } from "../../config/sessions.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import {
@@ -36,6 +35,7 @@ import {
   validateAgentParams,
   validateAgentWaitParams,
 } from "../protocol/index.js";
+import { getSessionStoreBridge } from "../session-store-bridge.js";
 import { loadSessionEntry } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import { waitForAgentJob } from "./agent-job.js";
@@ -281,12 +281,12 @@ export const agentHandlers: GatewayRequestHandlers = {
       const agentId = resolveAgentIdFromSessionKey(canonicalSessionKey);
       const mainSessionKey = resolveAgentMainSessionKey({ cfg, agentId });
       if (storePath) {
-        await updateSessionStore(storePath, (store) => {
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
           store[canonicalSessionKey] = nextEntry;
         });
       }
       if (canonicalSessionKey === mainSessionKey || canonicalSessionKey === "global") {
-        context.addChatRun(idem, {
+        await context.addChatRun(idem, {
           sessionKey: requestedSessionKey,
           clientRunId: idem,
         });

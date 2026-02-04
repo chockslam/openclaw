@@ -9,11 +9,8 @@ import { runWithModelFallback } from "../../agents/model-fallback.js";
 import { isCliProvider } from "../../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { resolveSandboxConfigForAgent, resolveSandboxRuntimeStatus } from "../../agents/sandbox.js";
-import {
-  resolveAgentIdFromSessionKey,
-  type SessionEntry,
-  updateSessionStoreEntry,
-} from "../../config/sessions.js";
+import { resolveAgentIdFromSessionKey, type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { buildThreadingToolContext, resolveEnforceFinalTag } from "./agent-runner-utils.js";
@@ -178,14 +175,21 @@ export async function runMemoryFlushIfNeeded(params: {
     }
     if (params.storePath && params.sessionKey) {
       try {
-        const updatedEntry = await updateSessionStoreEntry({
-          storePath: params.storePath,
-          sessionKey: params.sessionKey,
-          update: async () => ({
-            memoryFlushAt: Date.now(),
-            memoryFlushCompactionCount,
-          }),
-        });
+        let updatedEntry: SessionEntry | undefined;
+        await getSessionStoreBridge().updateSessionStore(
+          params.storePath,
+          (store: Record<string, SessionEntry>) => {
+            const current = store[params.sessionKey!];
+            if (current) {
+              updatedEntry = {
+                ...current,
+                memoryFlushAt: Date.now(),
+                memoryFlushCompactionCount,
+              };
+              store[params.sessionKey!] = updatedEntry;
+            }
+          },
+        );
         if (updatedEntry) {
           activeSessionEntry = updatedEntry;
         }

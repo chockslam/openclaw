@@ -29,7 +29,11 @@ import { listChannelSupportedActions, resolveChannelMessageToolHints } from "../
 import { formatUserTime, resolveUserTimeFormat, resolveUserTimezone } from "../date-time.js";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
 import { resolveOpenClawDocsPath } from "../docs-path.js";
-import { getApiKeyForModel, resolveModelAuthMode } from "../model-auth.js";
+import {
+  getApiKeyForModel,
+  resolveModelAuthMode,
+  resolveModelAuthModeAsync,
+} from "../model-auth.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
 import {
   ensureSessionHeader,
@@ -103,6 +107,7 @@ export type CompactEmbeddedPiSessionParams = {
   enqueue?: typeof enqueueCommand;
   extraSystemPrompt?: string;
   ownerNumbers?: string[];
+  secretsProvider?: import("../../gateway/interfaces/secrets.js").SecretsProvider;
 };
 
 /**
@@ -233,7 +238,12 @@ export async function compactEmbeddedPiSessionDirect(
       abortSignal: runAbortController.signal,
       modelProvider: model.provider,
       modelId,
-      modelAuthMode: resolveModelAuthMode(model.provider, params.config),
+      modelAuthMode: await resolveModelAuthModeAsync(
+        model.provider,
+        params.config,
+        undefined,
+        params.secretsProvider,
+      ),
     });
     const tools = sanitizeToolsForGoogle({ tools: toolsRaw, provider });
     logToolSchemasForGoogle({ tools, provider });

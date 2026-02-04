@@ -22,8 +22,8 @@ import {
   resolveGroupSessionKey,
   resolveSessionTranscriptPath,
   type SessionEntry,
-  updateSessionStore,
 } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { emitAgentEvent, registerAgentRunContext } from "../../infra/agent-events.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -253,6 +253,7 @@ export async function runAgentTurnWithFallback(params: {
               ? params.followupRun.run.authProfileId
               : undefined;
           return runEmbeddedPiAgent({
+            secretsProvider: params.opts?.secretsProvider,
             sessionId: params.followupRun.run.sessionId,
             sessionKey: params.sessionKey,
             messageProvider: params.sessionCtx.Provider?.trim().toLowerCase() || undefined,
@@ -556,7 +557,7 @@ export async function runAgentTurnWithFallback(params: {
           delete params.activeSessionStore[sessionKey];
 
           // Remove session entry from store using a fresh, locked snapshot.
-          await updateSessionStore(params.storePath, (store) => {
+          await getSessionStoreBridge().updateSessionStore(params.storePath, (store) => {
             delete store[sessionKey];
           });
         } catch (cleanupErr) {

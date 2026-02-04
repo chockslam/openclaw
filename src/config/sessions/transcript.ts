@@ -2,9 +2,9 @@ import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding
 import fs from "node:fs";
 import path from "node:path";
 import type { SessionEntry } from "./types.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
 import { resolveDefaultSessionStorePath, resolveSessionTranscriptPath } from "./paths.js";
-import { loadSessionStore, updateSessionStore } from "./store.js";
 
 function stripQuery(value: string): string {
   const noHash = value.split("#")[0] ?? value;
@@ -97,7 +97,8 @@ export async function appendAssistantMessageToSessionTranscript(params: {
   }
 
   const storePath = params.storePath ?? resolveDefaultSessionStorePath(params.agentId);
-  const store = loadSessionStore(storePath, { skipCache: true });
+  // Use bridge to get current state (cached or from source)
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   const entry = store[sessionKey] as SessionEntry | undefined;
   if (!entry?.sessionId) {
     return { ok: false, reason: `unknown sessionKey: ${sessionKey}` };
@@ -134,9 +135,11 @@ export async function appendAssistantMessageToSessionTranscript(params: {
   });
 
   if (!entry.sessionFile || entry.sessionFile !== sessionFile) {
-    await updateSessionStore(storePath, (current) => {
+    await getSessionStoreBridge().updateSessionStore(storePath, (current) => {
+      // Re-read entry inside update to be safe
+      const currentEntry = current[sessionKey] ?? entry;
       current[sessionKey] = {
-        ...entry,
+        ...currentEntry,
         sessionFile,
       };
     });

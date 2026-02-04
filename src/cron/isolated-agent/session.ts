@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { OpenClawConfig } from "../../config/config.js";
-import { loadSessionStore, resolveStorePath, type SessionEntry } from "../../config/sessions.js";
+import { resolveStorePath, type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 
 export function resolveCronSession(params: {
   cfg: OpenClawConfig;
@@ -12,7 +13,7 @@ export function resolveCronSession(params: {
   const storePath = resolveStorePath(sessionCfg?.store, {
     agentId: params.agentId,
   });
-  const store = loadSessionStore(storePath);
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   const entry = store[params.sessionKey];
   const sessionId = crypto.randomUUID();
   const systemSent = false;

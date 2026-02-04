@@ -82,6 +82,7 @@ export type EmbeddedRunAttemptParams = {
   streamParams?: AgentStreamParams;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
+  secretsProvider?: import("../../../gateway/interfaces/secrets.js").SecretsProvider;
 };
 
 export type EmbeddedRunAttemptResult = {

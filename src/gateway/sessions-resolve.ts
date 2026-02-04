@@ -1,5 +1,4 @@
 import type { OpenClawConfig } from "../config/config.js";
-import { loadSessionStore } from "../config/sessions.js";
 import { parseSessionLabel } from "../sessions/session-label.js";
 import {
   ErrorCodes,
@@ -7,6 +6,7 @@ import {
   errorShape,
   type SessionsResolveParams,
 } from "./protocol/index.js";
+import { getSessionStoreBridge } from "./session-store-bridge.js";
 import {
   listSessionsFromStore,
   loadCombinedSessionStoreForGateway,
@@ -45,7 +45,7 @@ export function resolveSessionKeyFromResolveParams(params: {
 
   if (hasKey) {
     const target = resolveGatewaySessionStoreTarget({ cfg, key });
-    const store = loadSessionStore(target.storePath);
+    const store = getSessionStoreBridge().loadSessionStore(target.storePath);
     const existingKey = target.storeKeys.find((candidate) => store[candidate]);
     if (!existingKey) {
       return {

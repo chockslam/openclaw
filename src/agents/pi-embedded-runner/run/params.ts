@@ -95,4 +95,5 @@ export type RunEmbeddedPiAgentParams = {
   streamParams?: AgentStreamParams;
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
+  secretsProvider?: { getSecret: (key: string) => Promise<string | null> };
 };

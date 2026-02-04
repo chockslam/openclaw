@@ -3,7 +3,8 @@ import type { FinalizedMsgContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
 import type { ReplyDispatcher, ReplyDispatchKind } from "./reply-dispatcher.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
-import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
+import { resolveStorePath } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import {
@@ -66,7 +67,7 @@ const resolveSessionTtsAuto = (
   const agentId = resolveSessionAgentId({ sessionKey, config: cfg });
   const storePath = resolveStorePath(cfg.session?.store, { agentId });
   try {
-    const store = loadSessionStore(storePath);
+    const store = getSessionStoreBridge().loadSessionStore(storePath);
     const entry = store[sessionKey.toLowerCase()] ?? store[sessionKey];
     return normalizeTtsAutoMode(entry?.ttsAuto);
   } catch {

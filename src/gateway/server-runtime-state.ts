@@ -1,4 +1,4 @@
-import type { Server as HttpServer } from "node:http";
+import type { Server as HttpServer, IncomingMessage, ServerResponse } from "node:http";
 import { WebSocketServer } from "ws";
 import type { CliDeps } from "../cli/deps.js";
 import type { createSubsystemLogger } from "../logging/subsystem.js";
@@ -7,6 +7,10 @@ import type { RuntimeEnv } from "../runtime.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import type { HooksConfigResolved } from "./hooks.js";
+import type { AuthProvider } from "./interfaces/auth.js";
+import type { ClusterStateAdapter } from "./interfaces/cluster-state.js";
+import type { SecretsProvider } from "./interfaces/secrets.js";
+import type { StorageAdapter } from "./interfaces/storage.js";
 import type { DedupeEntry } from "./server-shared.js";
 import type { GatewayTlsRuntime } from "./server/tls.js";
 import type { GatewayWsClient } from "./server/ws-types.js";
@@ -42,6 +46,30 @@ export async function createGatewayRuntimeState(params: {
   log: { info: (msg: string) => void; warn: (msg: string) => void };
   logHooks: ReturnType<typeof createSubsystemLogger>;
   logPlugins: ReturnType<typeof createSubsystemLogger>;
+  /**
+   * Optional cluster state adapter for enterprise deployments.
+   * When provided, enables distributed state across multiple gateway nodes.
+   */
+  clusterAdapter?: ClusterStateAdapter;
+  /**
+   * Optional storage adapter for enterprise deployments.
+   * When provided, enables persistent storage (PostgreSQL) instead of files.
+   */
+  storageAdapter?: StorageAdapter;
+  /**
+   * Optional auth provider for enterprise deployments.
+   * When provided, enables SSO/OIDC authentication.
+   */
+  authProvider?: AuthProvider;
+  /**
+   * Optional secrets provider for enterprise deployments.
+   * When provided, enables Vault/AWS Secrets Manager integration.
+   */
+  secretsProvider?: SecretsProvider;
+  /**
+   * Optional admin handler for enterprise deployments.
+   */
+  adminHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
 }): Promise<{
   canvasHost: CanvasHostHandler | null;
   httpServer: HttpServer;
@@ -62,13 +90,29 @@ export async function createGatewayRuntimeState(params: {
   chatRunState: ReturnType<typeof createChatRunState>;
   chatRunBuffers: Map<string, string>;
   chatDeltaSentAt: Map<string, number>;
-  addChatRun: (sessionId: string, entry: ChatRunEntry) => void;
+  addChatRun: (sessionId: string, entry: ChatRunEntry) => Promise<void>;
   removeChatRun: (
     sessionId: string,
     clientRunId: string,
     sessionKey?: string,
-  ) => ChatRunEntry | undefined;
+  ) => Promise<ChatRunEntry | undefined>;
   chatAbortControllers: Map<string, ChatAbortControllerEntry>;
+  /**
+   * Cluster state adapter (if provided) for enterprise integrations.
+   */
+  clusterAdapter?: ClusterStateAdapter;
+  /**
+   * Storage adapter (if provided) for enterprise integrations.
+   */
+  storageAdapter?: StorageAdapter;
+  /**
+   * Auth provider (if provided) for enterprise integrations.
+   */
+  authProvider?: AuthProvider;
+  /**
+   * Secrets provider (if provided) for enterprise integrations.
+   */
+  secretsProvider?: SecretsProvider;
 }> {
   let canvasHost: CanvasHostHandler | null = null;
   if (params.canvasHostEnabled) {
@@ -117,7 +161,10 @@ export async function createGatewayRuntimeState(params: {
       openResponsesConfig: params.openResponsesConfig,
       handleHooksRequest,
       handlePluginRequest,
+      adminHandler: params.adminHandler,
       resolvedAuth: params.resolvedAuth,
+      authProvider: params.authProvider,
+      secretsProvider: params.secretsProvider,
       tlsOptions: params.gatewayTls?.enabled ? params.gatewayTls.tlsOptions : undefined,
     });
     try {
@@ -154,7 +201,9 @@ export async function createGatewayRuntimeState(params: {
   const { broadcast } = createGatewayBroadcaster({ clients });
   const agentRunSeq = new Map<string, number>();
   const dedupe = new Map<string, DedupeEntry>();
-  const chatRunState = createChatRunState();
+
+  // Pass cluster adapter to chat run state
+  const chatRunState = createChatRunState(params.clusterAdapter);
   const chatRunRegistry = chatRunState.registry;
   const chatRunBuffers = chatRunState.buffers;
   const chatDeltaSentAt = chatRunState.deltaSentAt;
@@ -178,5 +227,9 @@ export async function createGatewayRuntimeState(params: {
     addChatRun,
     removeChatRun,
     chatAbortControllers,
+    clusterAdapter: params.clusterAdapter,
+    storageAdapter: params.storageAdapter,
+    authProvider: params.authProvider,
+    secretsProvider: params.secretsProvider,
   };
 }

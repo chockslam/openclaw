@@ -21,7 +21,8 @@ import {
   resolveChannelGroupPolicy,
   resolveChannelGroupRequireMention,
 } from "../config/group-policy.js";
-import { loadSessionStore, resolveStorePath } from "../config/sessions.js";
+import { resolveStorePath } from "../config/sessions.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { danger, logVerbose, shouldLogVerbose } from "../globals.js";
 import { formatUncaughtError } from "../infra/errors.js";
 import { enqueueSystemEvent } from "../infra/system-events.js";
@@ -311,7 +312,7 @@ export function createTelegramBot(opts: TelegramBotOptions) {
       `agent:${agentId}:telegram:group:${buildTelegramGroupPeerId(params.chatId, params.messageThreadId)}`;
     const storePath = resolveStorePath(cfg.session?.store, { agentId });
     try {
-      const store = loadSessionStore(storePath);
+      const store = getSessionStoreBridge().loadSessionStore(storePath);
       const entry = store[sessionKey];
       if (entry?.groupActivation === "always") {
         return false;

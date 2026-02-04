@@ -1,6 +1,7 @@
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeChatChannelId } from "../../channels/registry.js";
-import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
+import { resolveStorePath } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { normalizeE164 } from "../../utils.js";
 
 type HeartbeatRecipientsResult = { recipients: string[]; source: string };
@@ -13,7 +14,7 @@ function getSessionRecipients(cfg: OpenClawConfig) {
     return [];
   }
   const storePath = resolveStorePath(cfg.session?.store);
-  const store = loadSessionStore(storePath);
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   const isGroupKey = (key: string) =>
     key.includes(":group:") || key.includes(":channel:") || key.includes("@g.us");
   const isCronKey = (key: string) => key.startsWith("cron:");

@@ -1,7 +1,8 @@
 import { Type } from "@sinclair/typebox";
 import type { OpenClawConfig } from "../../config/config.js";
 import { loadConfig, resolveConfigSnapshotHash } from "../../config/io.js";
-import { loadSessionStore, resolveStorePath } from "../../config/sessions.js";
+import { resolveStorePath } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import {
   formatDoctorNonInteractiveHint,
   type RestartSentinelPayload,
@@ -105,7 +106,7 @@ export function createGatewayTool(opts?: {
           try {
             const cfg = loadConfig();
             const storePath = resolveStorePath(cfg.session?.store);
-            const store = loadSessionStore(storePath);
+            const store = getSessionStoreBridge().loadSessionStore(storePath);
             let entry = store[sessionKey];
             if (!entry?.deliveryContext && threadIndex !== -1 && baseSessionKey) {
               entry = store[baseSessionKey];

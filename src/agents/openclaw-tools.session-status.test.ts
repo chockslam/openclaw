@@ -3,10 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 const loadSessionStoreMock = vi.fn();
 const updateSessionStoreMock = vi.fn();
 
-vi.mock("../config/sessions.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../config/sessions.js")>();
-  return {
-    ...actual,
+vi.mock("../gateway/session-store-bridge.js", () => ({
+  getSessionStoreBridge: () => ({
     loadSessionStore: (storePath: string) => loadSessionStoreMock(storePath),
     updateSessionStore: async (
       storePath: string,
@@ -17,6 +15,12 @@ vi.mock("../config/sessions.js", async (importOriginal) => {
       updateSessionStoreMock(storePath, store);
       return store;
     },
+  }),
+}));
+vi.mock("../config/sessions.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config/sessions.js")>();
+  return {
+    ...actual,
     resolveStorePath: (_store: string | undefined, opts?: { agentId?: string }) =>
       opts?.agentId === "support" ? "/tmp/support/sessions.json" : "/tmp/main/sessions.json",
   };

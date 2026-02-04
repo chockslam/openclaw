@@ -21,12 +21,8 @@ import { normalizeGroupActivation } from "../../auto-reply/group-activation.js";
 import { getFollowupQueueDepth, resolveQueueSettings } from "../../auto-reply/reply/queue.js";
 import { buildStatusMessage } from "../../auto-reply/status.js";
 import { loadConfig } from "../../config/config.js";
-import {
-  loadSessionStore,
-  resolveStorePath,
-  type SessionEntry,
-  updateSessionStore,
-} from "../../config/sessions.js";
+import { resolveStorePath, type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { loadCombinedSessionStoreForGateway } from "../../gateway/session-utils.js";
 import {
   formatUsageWindowSummary,
@@ -297,7 +293,7 @@ export function createSessionStatusTool(opts?: {
         ? resolveAgentIdFromSessionKey(requestedKeyRaw)
         : requesterAgentId;
       let storePath = resolveStorePath(cfg.session?.store, { agentId });
-      let store = loadSessionStore(storePath);
+      let store = getSessionStoreBridge().loadSessionStore(storePath);
 
       // Resolve against the requester-scoped store first to avoid leaking default agent data.
       let resolved = resolveSessionEntry({
@@ -319,7 +315,7 @@ export function createSessionStatusTool(opts?: {
           requestedKeyRaw = resolvedKey;
           agentId = resolveAgentIdFromSessionKey(resolvedKey);
           storePath = resolveStorePath(cfg.session?.store, { agentId });
-          store = loadSessionStore(storePath);
+          store = getSessionStoreBridge().loadSessionStore(storePath);
           resolved = resolveSessionEntry({
             store,
             keyRaw: requestedKeyRaw,
@@ -362,7 +358,7 @@ export function createSessionStatusTool(opts?: {
         });
         if (applied.updated) {
           store[resolved.key] = nextEntry;
-          await updateSessionStore(storePath, (nextStore) => {
+          await getSessionStoreBridge().updateSessionStore(storePath, (nextStore) => {
             nextStore[resolved.key] = nextEntry;
           });
           resolved.entry = nextEntry;

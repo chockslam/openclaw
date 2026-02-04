@@ -25,23 +25,36 @@ function shouldSuppressHeartbeatBroadcast(runId: string): boolean {
   }
 }
 
+import type { ClusterStateAdapter } from "./interfaces/cluster-state.js";
+
 export type ChatRunEntry = {
   sessionKey: string;
   clientRunId: string;
 };
 
 export type ChatRunRegistry = {
-  add: (sessionId: string, entry: ChatRunEntry) => void;
-  peek: (sessionId: string) => ChatRunEntry | undefined;
-  shift: (sessionId: string) => ChatRunEntry | undefined;
-  remove: (sessionId: string, clientRunId: string, sessionKey?: string) => ChatRunEntry | undefined;
-  clear: () => void;
+  add: (sessionId: string, entry: ChatRunEntry) => Promise<void>;
+  peek: (sessionId: string) => Promise<ChatRunEntry | undefined>;
+  shift: (sessionId: string) => Promise<ChatRunEntry | undefined>;
+  remove: (
+    sessionId: string,
+    clientRunId: string,
+    sessionKey?: string,
+  ) => Promise<ChatRunEntry | undefined>;
+  clear: () => Promise<void>;
 };
 
-export function createChatRunRegistry(): ChatRunRegistry {
+export function createChatRunRegistry(adapter?: ClusterStateAdapter): ChatRunRegistry {
   const chatRunSessions = new Map<string, ChatRunEntry[]>();
+  const CHAT_RUN_TTL = 30 * 60 * 1000; // 30 minutes
 
-  const add = (sessionId: string, entry: ChatRunEntry) => {
+  const add = async (sessionId: string, entry: ChatRunEntry) => {
+    if (adapter) {
+      const queue = (await adapter.getChatRunQueue(sessionId)) ?? [];
+      queue.push(entry);
+      await adapter.setChatRunQueue(sessionId, queue, CHAT_RUN_TTL);
+      return;
+    }
     const queue = chatRunSessions.get(sessionId);
     if (queue) {
       queue.push(entry);
@@ -50,9 +63,28 @@ export function createChatRunRegistry(): ChatRunRegistry {
     }
   };
 
-  const peek = (sessionId: string) => chatRunSessions.get(sessionId)?.[0];
+  const peek = async (sessionId: string) => {
+    if (adapter) {
+      const queue = await adapter.getChatRunQueue(sessionId);
+      return queue?.[0];
+    }
+    return chatRunSessions.get(sessionId)?.[0];
+  };
 
-  const shift = (sessionId: string) => {
+  const shift = async (sessionId: string) => {
+    if (adapter) {
+      const queue = await adapter.getChatRunQueue(sessionId);
+      if (!queue || queue.length === 0) {
+        return undefined;
+      }
+      const entry = queue.shift();
+      if (!queue.length) {
+        await adapter.deleteChatRunQueue(sessionId);
+      } else {
+        await adapter.setChatRunQueue(sessionId, queue, CHAT_RUN_TTL);
+      }
+      return entry;
+    }
     const queue = chatRunSessions.get(sessionId);
     if (!queue || queue.length === 0) {
       return undefined;
@@ -64,7 +96,28 @@ export function createChatRunRegistry(): ChatRunRegistry {
     return entry;
   };
 
-  const remove = (sessionId: string, clientRunId: string, sessionKey?: string) => {
+  const remove = async (sessionId: string, clientRunId: string, sessionKey?: string) => {
+    if (adapter) {
+      const queue = await adapter.getChatRunQueue(sessionId);
+      if (!queue || queue.length === 0) {
+        return undefined;
+      }
+      const idx = queue.findIndex(
+        (entry) =>
+          entry.clientRunId === clientRunId &&
+          (sessionKey ? entry.sessionKey === sessionKey : true),
+      );
+      if (idx < 0) {
+        return undefined;
+      }
+      const [entry] = queue.splice(idx, 1);
+      if (!queue.length) {
+        await adapter.deleteChatRunQueue(sessionId);
+      } else {
+        await adapter.setChatRunQueue(sessionId, queue, CHAT_RUN_TTL);
+      }
+      return entry;
+    }
     const queue = chatRunSessions.get(sessionId);
     if (!queue || queue.length === 0) {
       return undefined;
@@ -83,7 +136,10 @@ export function createChatRunRegistry(): ChatRunRegistry {
     return entry;
   };
 
-  const clear = () => {
+  const clear = async () => {
+    // Note: adapter does not support clear() yet as it might clear other nodes' state.
+    // implementing only for local map for now, or we need to expand adapter interface.
+    // For now clear() is mostly used in tests or reset.
     chatRunSessions.clear();
   };
 
@@ -98,14 +154,14 @@ export type ChatRunState = {
   clear: () => void;
 };
 
-export function createChatRunState(): ChatRunState {
-  const registry = createChatRunRegistry();
+export function createChatRunState(adapter?: ClusterStateAdapter): ChatRunState {
+  const registry = createChatRunRegistry(adapter);
   const buffers = new Map<string, string>();
   const deltaSentAt = new Map<string, number>();
   const abortedRuns = new Map<string, number>();
 
   const clear = () => {
-    registry.clear();
+    void registry.clear();
     buffers.clear();
     deltaSentAt.clear();
     abortedRuns.clear();
@@ -235,8 +291,8 @@ export function createAgentEventHandler({
     }
   };
 
-  return (evt: AgentEventPayload) => {
-    const chatLink = chatRunState.registry.peek(evt.runId);
+  return async (evt: AgentEventPayload) => {
+    const chatLink = await chatRunState.registry.peek(evt.runId);
     const sessionKey = chatLink?.sessionKey ?? resolveSessionKeyForRun(evt.runId);
     const clientRunId = chatLink?.clientRunId ?? evt.runId;
     const isAborted =
@@ -273,7 +329,7 @@ export function createAgentEventHandler({
         emitChatDelta(sessionKey, clientRunId, evt.seq, evt.data.text);
       } else if (!isAborted && (lifecyclePhase === "end" || lifecyclePhase === "error")) {
         if (chatLink) {
-          const finished = chatRunState.registry.shift(evt.runId);
+          const finished = await chatRunState.registry.shift(evt.runId);
           if (!finished) {
             clearAgentRunContext(evt.runId);
             return;
@@ -300,7 +356,7 @@ export function createAgentEventHandler({
         chatRunState.buffers.delete(clientRunId);
         chatRunState.deltaSentAt.delete(clientRunId);
         if (chatLink) {
-          chatRunState.registry.remove(evt.runId, clientRunId, sessionKey);
+          await chatRunState.registry.remove(evt.runId, clientRunId, sessionKey);
         }
       }
     }

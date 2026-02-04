@@ -76,6 +76,7 @@
   "main": "dist/index.js",
   "exports": {
     ".": "./dist/index.js",
+    "./*": "./dist/*",
     "./plugin-sdk": "./dist/plugin-sdk/index.js",
     "./plugin-sdk/*": "./dist/plugin-sdk/*",
     "./cli-entry": "./openclaw.mjs"

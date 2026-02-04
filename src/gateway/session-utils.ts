@@ -15,7 +15,6 @@ import { resolveStateDir } from "../config/paths.js";
 import {
   buildGroupDisplayName,
   canonicalizeMainSessionAlias,
-  loadSessionStore,
   resolveMainSessionKey,
   resolveStorePath,
   type SessionEntry,
@@ -27,6 +26,7 @@ import {
   parseAgentSessionKey,
 } from "../routing/session-key.js";
 import { normalizeSessionDeliveryFields } from "../utils/delivery-context.js";
+import { getSessionStoreBridge } from "./session-store-bridge.js";
 import {
   readFirstUserMessageFromTranscript,
   readLastMessagePreviewFromTranscript,
@@ -183,7 +183,7 @@ export function loadSessionEntry(sessionKey: string) {
   const canonicalKey = resolveSessionStoreKey({ cfg, sessionKey });
   const agentId = resolveSessionStoreAgentId(cfg, canonicalKey);
   const storePath = resolveStorePath(sessionCfg?.store, { agentId });
-  const store = loadSessionStore(storePath);
+  const store = getSessionStoreBridge().loadSessionStore(storePath);
   const entry = store[canonicalKey];
   return { cfg, storePath, store, entry, canonicalKey };
 }
@@ -467,7 +467,7 @@ export function loadCombinedSessionStoreForGateway(cfg: OpenClawConfig): {
   if (storeConfig && !isStorePathTemplate(storeConfig)) {
     const storePath = resolveStorePath(storeConfig);
     const defaultAgentId = normalizeAgentId(resolveDefaultAgentId(cfg));
-    const store = loadSessionStore(storePath);
+    const store = getSessionStoreBridge().loadSessionStore(storePath);
     const combined: Record<string, SessionEntry> = {};
     for (const [key, entry] of Object.entries(store)) {
       const canonicalKey = canonicalizeSessionKeyForAgent(defaultAgentId, key);
@@ -485,7 +485,7 @@ export function loadCombinedSessionStoreForGateway(cfg: OpenClawConfig): {
   const combined: Record<string, SessionEntry> = {};
   for (const agentId of agentIds) {
     const storePath = resolveStorePath(storeConfig, { agentId });
-    const store = loadSessionStore(storePath);
+    const store = getSessionStoreBridge().loadSessionStore(storePath);
     for (const [key, entry] of Object.entries(store)) {
       const canonicalKey = canonicalizeSessionKeyForAgent(agentId, key);
       mergeSessionEntryIntoCombined({

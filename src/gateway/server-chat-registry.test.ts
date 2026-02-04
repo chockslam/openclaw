@@ -2,17 +2,17 @@ import { describe, expect, test } from "vitest";
 import { createChatRunRegistry } from "./server-chat.js";
 
 describe("chat run registry", () => {
-  test("queues and removes runs per session", () => {
+  test("queues and removes runs per session", async () => {
     const registry = createChatRunRegistry();
 
-    registry.add("s1", { sessionKey: "main", clientRunId: "c1" });
-    registry.add("s1", { sessionKey: "main", clientRunId: "c2" });
+    await registry.add("s1", { sessionKey: "main", clientRunId: "c1" });
+    await registry.add("s1", { sessionKey: "main", clientRunId: "c2" });
 
-    expect(registry.peek("s1")?.clientRunId).toBe("c1");
-    expect(registry.shift("s1")?.clientRunId).toBe("c1");
-    expect(registry.peek("s1")?.clientRunId).toBe("c2");
+    expect((await registry.peek("s1"))?.clientRunId).toBe("c1");
+    expect((await registry.shift("s1"))?.clientRunId).toBe("c1");
+    expect((await registry.peek("s1"))?.clientRunId).toBe("c2");
 
-    expect(registry.remove("s1", "c2")?.clientRunId).toBe("c2");
-    expect(registry.peek("s1")).toBeUndefined();
+    expect((await registry.remove("s1", "c2"))?.clientRunId).toBe("c2");
+    expect(await registry.peek("s1")).toBeUndefined();
   });
 });

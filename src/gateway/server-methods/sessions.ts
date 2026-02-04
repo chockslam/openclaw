@@ -6,11 +6,9 @@ import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
 import { clearSessionQueues } from "../../auto-reply/reply/queue.js";
 import { loadConfig } from "../../config/config.js";
 import {
-  loadSessionStore,
   snapshotSessionOrigin,
   resolveMainSessionKey,
   type SessionEntry,
-  updateSessionStore,
 } from "../../config/sessions.js";
 import {
   ErrorCodes,
@@ -24,6 +22,7 @@ import {
   validateSessionsResetParams,
   validateSessionsResolveParams,
 } from "../protocol/index.js";
+import { getSessionStoreBridge } from "../session-store-bridge.js";
 import {
   archiveFileOnDisk,
   listSessionsFromStore,
@@ -102,7 +101,9 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     for (const key of keys) {
       try {
         const target = resolveGatewaySessionStoreTarget({ cfg, key });
-        const store = storeCache.get(target.storePath) ?? loadSessionStore(target.storePath);
+        const store =
+          storeCache.get(target.storePath) ??
+          getSessionStoreBridge().loadSessionStore(target.storePath);
         storeCache.set(target.storePath, store);
         const entry =
           target.storeKeys.map((candidate) => store[candidate]).find(Boolean) ??
@@ -175,7 +176,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     const cfg = loadConfig();
     const target = resolveGatewaySessionStoreTarget({ cfg, key });
     const storePath = target.storePath;
-    const applied = await updateSessionStore(storePath, async (store) => {
+    const applied = await getSessionStoreBridge().updateSessionStore(storePath, async (store) => {
       const primaryKey = target.storeKeys[0] ?? key;
       const existingKey = target.storeKeys.find((candidate) => store[candidate]);
       if (existingKey && existingKey !== primaryKey && !store[primaryKey]) {
@@ -224,7 +225,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     const cfg = loadConfig();
     const target = resolveGatewaySessionStoreTarget({ cfg, key });
     const storePath = target.storePath;
-    const next = await updateSessionStore(storePath, (store) => {
+    const next = await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       const primaryKey = target.storeKeys[0] ?? key;
       const existingKey = target.storeKeys.find((candidate) => store[candidate]);
       if (existingKey && existingKey !== primaryKey && !store[primaryKey]) {
@@ -319,7 +320,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         return;
       }
     }
-    await updateSessionStore(storePath, (store) => {
+    await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       const primaryKey = target.storeKeys[0] ?? key;
       const existingKey = target.storeKeys.find((candidate) => store[candidate]);
       if (existingKey && existingKey !== primaryKey && !store[primaryKey]) {
@@ -380,7 +381,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     const target = resolveGatewaySessionStoreTarget({ cfg, key });
     const storePath = target.storePath;
     // Lock + read in a short critical section; transcript work happens outside.
-    const compactTarget = await updateSessionStore(storePath, (store) => {
+    const compactTarget = await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       const primaryKey = target.storeKeys[0] ?? key;
       const existingKey = target.storeKeys.find((candidate) => store[candidate]);
       if (existingKey && existingKey !== primaryKey && !store[primaryKey]) {
@@ -445,7 +446,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     const keptLines = lines.slice(-maxLines);
     fs.writeFileSync(filePath, `${keptLines.join("\n")}\n`, "utf-8");
 
-    await updateSessionStore(storePath, (store) => {
+    await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       const entryKey = compactTarget.primaryKey;
       const entryToUpdate = store[entryKey];
       if (!entryToUpdate) {

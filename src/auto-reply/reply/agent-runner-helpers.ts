@@ -1,6 +1,6 @@
 import type { ReplyPayload } from "../types.js";
 import type { TypingSignaler } from "./typing-mode.js";
-import { loadSessionStore } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { isAudioFileName } from "../../media/mime.js";
 import { normalizeVerboseLevel, type VerboseLevel } from "../thinking.js";
 import { scheduleFollowupDrain } from "./queue.js";
@@ -23,7 +23,7 @@ export const createShouldEmitToolResult = (params: {
       return fallbackVerbose !== "off";
     }
     try {
-      const store = loadSessionStore(params.storePath);
+      const store = getSessionStoreBridge().loadSessionStore(params.storePath);
       const entry = store[params.sessionKey];
       const current = normalizeVerboseLevel(String(entry?.verboseLevel ?? ""));
       if (current) {
@@ -48,7 +48,7 @@ export const createShouldEmitToolOutput = (params: {
       return fallbackVerbose === "full";
     }
     try {
-      const store = loadSessionStore(params.storePath);
+      const store = getSessionStoreBridge().loadSessionStore(params.storePath);
       const entry = store[params.sessionKey];
       const current = normalizeVerboseLevel(String(entry?.verboseLevel ?? ""));
       if (current) {

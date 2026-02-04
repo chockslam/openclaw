@@ -18,8 +18,8 @@ import {
   resolveGroupSessionKey,
   resolveSessionFilePath,
   type SessionEntry,
-  updateSessionStore,
 } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
 import { normalizeMainKey } from "../../routing/session-key.js";
@@ -279,7 +279,7 @@ export async function runPreparedReply(
       sessionEntry.updatedAt = Date.now();
       sessionStore[sessionKey] = sessionEntry;
       if (storePath) {
-        await updateSessionStore(storePath, (store) => {
+        await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
           store[sessionKey] = sessionEntry;
         });
       }

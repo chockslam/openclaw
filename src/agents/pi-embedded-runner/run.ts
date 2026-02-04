@@ -218,6 +218,7 @@ export async function runEmbeddedPiAgent(
           profileId: candidate,
           store: authStore,
           agentDir,
+          secretsProvider: params.secretsProvider,
         });
       };
 

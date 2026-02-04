@@ -21,6 +21,10 @@ const AWS_ACCESS_KEY_ENV = "AWS_ACCESS_KEY_ID";
 const AWS_SECRET_KEY_ENV = "AWS_SECRET_ACCESS_KEY";
 const AWS_PROFILE_ENV = "AWS_PROFILE";
 
+export interface SecretsProvider {
+  getSecret(key: string): Promise<string | null>;
+}
+
 function resolveProviderConfig(
   cfg: OpenClawConfig | undefined,
   provider: string,
@@ -136,6 +140,7 @@ export async function resolveApiKeyForProvider(params: {
   preferredProfile?: string;
   store?: AuthProfileStore;
   agentDir?: string;
+  secretsProvider?: SecretsProvider;
 }): Promise<ResolvedProviderAuth> {
   const { provider, cfg, profileId, preferredProfile } = params;
   const store = params.store ?? ensureAuthProfileStore(params.agentDir);
@@ -190,6 +195,17 @@ export async function resolveApiKeyForProvider(params: {
     } catch {}
   }
 
+  if (params.secretsProvider) {
+    const secretResolved = await resolveSecretApiKey(provider, params.secretsProvider);
+    if (secretResolved) {
+      return {
+        apiKey: secretResolved.apiKey,
+        source: secretResolved.source,
+        mode: secretResolved.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key",
+      };
+    }
+  }
+
   const envResolved = resolveEnvApiKey(provider);
   if (envResolved) {
     return {
@@ -235,7 +251,9 @@ export type ModelAuthMode = "api-key" | "oauth" | "token" | "mixed" | "aws-sdk" 
 export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   const normalized = normalizeProviderId(provider);
   const applied = new Set(getShellEnvAppliedKeys());
+
   const pick = (envVar: string): EnvApiKeyResult | null => {
+    // Fallback to process.env
     const value = process.env[envVar]?.trim();
     if (!value) {
       return null;
@@ -308,6 +326,79 @@ export function resolveEnvApiKey(provider: string): EnvApiKeyResult | null {
   return pick(envVar);
 }
 
+export async function resolveSecretApiKey(
+  provider: string,
+  secretsProvider: SecretsProvider,
+): Promise<EnvApiKeyResult | null> {
+  const normalized = normalizeProviderId(provider);
+
+  const checkSecret = async (envVar: string): Promise<EnvApiKeyResult | null> => {
+    const val = await secretsProvider.getSecret(envVar);
+    if (val?.trim()) {
+      return { apiKey: val.trim(), source: `secret:${envVar}` };
+    }
+    return null;
+  };
+
+  const envMap: Record<string, string> = {
+    openai: "OPENAI_API_KEY",
+    google: "GEMINI_API_KEY",
+    groq: "GROQ_API_KEY",
+    deepgram: "DEEPGRAM_API_KEY",
+    cerebras: "CEREBRAS_API_KEY",
+    xai: "XAI_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+    "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
+    moonshot: "MOONSHOT_API_KEY",
+    minimax: "MINIMAX_API_KEY",
+    xiaomi: "XIAOMI_API_KEY",
+    synthetic: "SYNTHETIC_API_KEY",
+    venice: "VENICE_API_KEY",
+    mistral: "MISTRAL_API_KEY",
+    opencode: "OPENCODE_API_KEY",
+  };
+
+  // Also check specific provider tokens like GitHub Copilot, etc.
+  // Ideally reusing logic from resolveEnvApiKey but mapping to async calls.
+  // For compactness, let's just use the main map and essential ones.
+  // Duplicate logic for specific providers (GH, Anthropic, etc)
+
+  if (normalized === "github-copilot") {
+    return (
+      (await checkSecret("COPILOT_GITHUB_TOKEN")) ??
+      (await checkSecret("GH_TOKEN")) ??
+      (await checkSecret("GITHUB_TOKEN"))
+    );
+  }
+  if (normalized === "anthropic") {
+    return (await checkSecret("ANTHROPIC_OAUTH_TOKEN")) ?? (await checkSecret("ANTHROPIC_API_KEY"));
+  }
+  if (normalized === "chutes") {
+    return (await checkSecret("CHUTES_OAUTH_TOKEN")) ?? (await checkSecret("CHUTES_API_KEY"));
+  }
+  if (normalized === "zai") {
+    return (await checkSecret("ZAI_API_KEY")) ?? (await checkSecret("Z_AI_API_KEY"));
+  }
+  if (normalized === "opencode") {
+    return (await checkSecret("OPENCODE_API_KEY")) ?? (await checkSecret("OPENCODE_ZEN_API_KEY"));
+  }
+  if (normalized === "qwen-portal") {
+    return (await checkSecret("QWEN_OAUTH_TOKEN")) ?? (await checkSecret("QWEN_PORTAL_API_KEY"));
+  }
+  if (normalized === "minimax-portal") {
+    return (await checkSecret("MINIMAX_OAUTH_TOKEN")) ?? (await checkSecret("MINIMAX_API_KEY"));
+  }
+  if (normalized === "kimi-coding") {
+    return (await checkSecret("KIMI_API_KEY")) ?? (await checkSecret("KIMICODE_API_KEY"));
+  }
+
+  const envVar = envMap[normalized];
+  if (!envVar) {
+    return null;
+  }
+  return checkSecret(envVar);
+}
+
 export function resolveModelAuthMode(
   provider?: string,
   cfg?: OpenClawConfig,
@@ -364,6 +455,76 @@ export function resolveModelAuthMode(
   return "unknown";
 }
 
+export async function resolveModelAuthModeAsync(
+  provider?: string,
+  cfg?: OpenClawConfig,
+  store?: AuthProfileStore,
+  secretsProvider?: SecretsProvider,
+): Promise<ModelAuthMode | undefined> {
+  const resolved = provider?.trim();
+  if (!resolved) {
+    return undefined;
+  }
+
+  // 1. Check overrides (AWS SDK, etc)
+  const authOverride = resolveProviderAuthOverride(cfg, resolved);
+  if (authOverride === "aws-sdk") {
+    return "aws-sdk";
+  }
+
+  // 2. Check Profiles
+  const authStore = store ?? ensureAuthProfileStore();
+  const profiles = listProfilesForProvider(authStore, resolved);
+  if (profiles.length > 0) {
+    const modes = new Set(
+      profiles
+        .map((id) => authStore.profiles[id]?.type)
+        .filter((mode): mode is "api_key" | "oauth" | "token" => Boolean(mode)),
+    );
+    const distinct = ["oauth", "token", "api_key"].filter((k) =>
+      modes.has(k as "oauth" | "token" | "api_key"),
+    );
+    if (distinct.length >= 2) {
+      return "mixed";
+    }
+    if (modes.has("oauth")) {
+      return "oauth";
+    }
+    if (modes.has("token")) {
+      return "token";
+    }
+    if (modes.has("api_key")) {
+      return "api-key";
+    }
+  }
+
+  // 3. Check Bedrock default
+  if (authOverride === undefined && normalizeProviderId(resolved) === "amazon-bedrock") {
+    return "aws-sdk";
+  }
+
+  // 4. Check Secrets (Async) - PRIORITIZED over Env
+  if (secretsProvider) {
+    const secretKey = await resolveSecretApiKey(resolved, secretsProvider);
+    if (secretKey?.apiKey) {
+      return secretKey.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key";
+    }
+  }
+
+  // 5. Check Env (Sync)
+  const envKey = resolveEnvApiKey(resolved);
+  if (envKey?.apiKey) {
+    return envKey.source.includes("OAUTH_TOKEN") ? "oauth" : "api-key";
+  }
+
+  // 6. Check Custom Config
+  if (getCustomProviderApiKey(cfg, resolved)) {
+    return "api-key";
+  }
+
+  return "unknown";
+}
+
 export async function getApiKeyForModel(params: {
   model: Model<Api>;
   cfg?: OpenClawConfig;
@@ -371,6 +532,7 @@ export async function getApiKeyForModel(params: {
   preferredProfile?: string;
   store?: AuthProfileStore;
   agentDir?: string;
+  secretsProvider?: SecretsProvider;
 }): Promise<ResolvedProviderAuth> {
   return resolveApiKeyForProvider({
     provider: params.model.provider,
@@ -379,6 +541,7 @@ export async function getApiKeyForModel(params: {
     preferredProfile: params.preferredProfile,
     store: params.store,
     agentDir: params.agentDir,
+    secretsProvider: params.secretsProvider,
   });
 }
 
