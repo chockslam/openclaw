@@ -172,12 +172,13 @@ export type GatewayServerOptions = {
    */
   secretsProvider?: SecretsProvider;
   /**
-   * Optional Admin API handler for enterprise deployments.
+   * Optional custom HTTP handlers for enterprise deployments.
    */
-  adminHandler?: (
+  customHandlers?: Array<(
     req: import("node:http").IncomingMessage,
     res: import("node:http").ServerResponse,
-  ) => Promise<boolean>;
+  ) => Promise<boolean>>;
+  agentHookInterceptor?: (payload: any) => Promise<boolean> | boolean;
 };
 
 export async function startGatewayServer(
@@ -223,8 +224,8 @@ export async function startGatewayServer(
     const issues =
       configSnapshot.issues.length > 0
         ? configSnapshot.issues
-            .map((issue) => `${issue.path || "<root>"}: ${issue.message}`)
-            .join("\n")
+          .map((issue) => `${issue.path || "<root>"}: ${issue.message}`)
+          .join("\n")
         : "Unknown validation issue.";
     throw new Error(
       `Invalid config at ${configSnapshot.path}.\n${issues}\nRun "${formatCliCommand("openclaw doctor")}" to repair, then retry.`,
@@ -349,7 +350,8 @@ export async function startGatewayServer(
     storageAdapter: opts.storageAdapter ?? new FileStorageAdapter(),
     authProvider: opts.authProvider,
     secretsProvider: opts.secretsProvider ?? new EnvSecretsProvider(),
-    adminHandler: opts.adminHandler,
+    customHandlers: opts.customHandlers,
+    agentHookInterceptor: opts.agentHookInterceptor,
   });
 
   // Initialize session store bridge with the configured storage adapter

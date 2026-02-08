@@ -67,9 +67,10 @@ export async function createGatewayRuntimeState(params: {
    */
   secretsProvider?: SecretsProvider;
   /**
-   * Optional admin handler for enterprise deployments.
+   * Optional custom handlers (e.g. Admin API, Auth) for enterprise deployments.
    */
-  adminHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+  customHandlers?: Array<(req: IncomingMessage, res: ServerResponse) => Promise<boolean>>;
+  agentHookInterceptor?: (payload: any) => Promise<boolean> | boolean;
 }): Promise<{
   canvasHost: CanvasHostHandler | null;
   httpServer: HttpServer;
@@ -141,6 +142,7 @@ export async function createGatewayRuntimeState(params: {
     bindHost: params.bindHost,
     port: params.port,
     logHooks: params.logHooks,
+    agentHookInterceptor: params.agentHookInterceptor,
   });
 
   const handlePluginRequest = createGatewayPluginRequestHandler({
@@ -161,7 +163,7 @@ export async function createGatewayRuntimeState(params: {
       openResponsesConfig: params.openResponsesConfig,
       handleHooksRequest,
       handlePluginRequest,
-      adminHandler: params.adminHandler,
+      customHandlers: params.customHandlers,
       resolvedAuth: params.resolvedAuth,
       authProvider: params.authProvider,
       secretsProvider: params.secretsProvider,

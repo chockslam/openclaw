@@ -47,7 +47,7 @@ type HookDispatchers = {
     thinking?: string;
     timeoutSeconds?: number;
     allowUnsafeExternalContent?: boolean;
-  }) => string;
+  }) => Promise<string>;
 };
 
 function sendJson(res: ServerResponse, status: number, body: unknown) {
@@ -136,7 +136,12 @@ export function createHooksRequestHandler(
         sendJson(res, 400, { ok: false, error: normalized.error });
         return true;
       }
-      const runId = dispatchAgentHook(normalized.value);
+      const runId = await dispatchAgentHook(normalized.value);
+      if (runId === "blocked" || !runId) {
+        // blocked by interceptor
+        sendJson(res, 403, { ok: false, error: "forbidden" });
+        return true;
+      }
       sendJson(res, 202, { ok: true, runId });
       return true;
     }
@@ -172,7 +177,7 @@ export function createHooksRequestHandler(
             sendJson(res, 400, { ok: false, error: getHookChannelError() });
             return true;
           }
-          const runId = dispatchAgentHook({
+          const runId = await dispatchAgentHook({
             message: mapped.action.message,
             name: mapped.action.name ?? "Hook",
             wakeMode: mapped.action.wakeMode,
@@ -185,6 +190,10 @@ export function createHooksRequestHandler(
             timeoutSeconds: mapped.action.timeoutSeconds,
             allowUnsafeExternalContent: mapped.action.allowUnsafeExternalContent,
           });
+          if (runId === "blocked" || !runId) {
+            sendJson(res, 403, { ok: false, error: "forbidden" });
+            return true;
+          }
           sendJson(res, 202, { ok: true, runId });
           return true;
         }
@@ -211,7 +220,7 @@ export function createGatewayHttpServer(opts: {
   openResponsesConfig?: import("../config/types.gateway.js").GatewayHttpResponsesConfig;
   handleHooksRequest: HooksRequestHandler;
   handlePluginRequest?: HooksRequestHandler;
-  adminHandler?: (req: IncomingMessage, res: ServerResponse) => Promise<boolean>;
+  customHandlers?: Array<(req: IncomingMessage, res: ServerResponse) => Promise<boolean>>;
   resolvedAuth: import("./auth.js").ResolvedGatewayAuth;
   tlsOptions?: TlsOptions;
   authProvider?: import("./interfaces/auth.js").AuthProvider;
@@ -228,7 +237,7 @@ export function createGatewayHttpServer(opts: {
     openResponsesConfig,
     handleHooksRequest,
     handlePluginRequest,
-    adminHandler,
+    customHandlers,
     resolvedAuth,
     authProvider,
     secretsProvider,
@@ -255,8 +264,12 @@ export function createGatewayHttpServer(opts: {
         return;
       }
 
-      if (adminHandler && (await adminHandler(req, res))) {
-        return;
+      if (customHandlers) {
+        for (const handler of customHandlers) {
+          if (await handler(req, res)) {
+            return;
+          }
+        }
       }
 
       if (

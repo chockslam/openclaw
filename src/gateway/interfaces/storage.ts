@@ -73,4 +73,39 @@ export interface StorageAdapter {
     limit?: number;
     offset?: number;
   }): Promise<AuditEvent[]>;
+
+  /**
+   * Save a new configuration version.
+   * @enterprise
+   */
+  saveConfig?(yaml: string): Promise<number>;
+
+  /**
+   * Get the active or latest configuration.
+   * @enterprise
+   */
+  getConfig?(activeOnly?: boolean): Promise<{
+    id: number;
+    yaml: string;
+    isActive: boolean;
+    createdAt: Date;
+  } | null>;
+
+  /**
+   * Activate a specific configuration version.
+   * @enterprise
+   */
+  activateConfig?(id: number): Promise<void>;
+
+  /**
+   * Link a provider identity to a user.
+   * @enterprise
+   */
+  linkUser?(userId: string, provider: string, providerId: string): Promise<void>;
+
+  /**
+   * Get user ID by provider identity.
+   * @enterprise
+   */
+  getUserIdByChannel?(provider: string, providerId: string): Promise<string | null>;
 }

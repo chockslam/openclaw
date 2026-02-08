@@ -18,6 +18,7 @@ export function createGatewayHooksRequestHandler(params: {
   bindHost: string;
   port: number;
   logHooks: SubsystemLogger;
+  agentHookInterceptor?: (payload: any) => Promise<boolean> | boolean;
 }) {
   const { deps, getHooksConfig, bindHost, port, logHooks } = params;
 
@@ -29,7 +30,7 @@ export function createGatewayHooksRequestHandler(params: {
     }
   };
 
-  const dispatchAgentHook = (value: {
+  const dispatchAgentHook = async (value: {
     message: string;
     name: string;
     wakeMode: "now" | "next-heartbeat";
@@ -42,6 +43,14 @@ export function createGatewayHooksRequestHandler(params: {
     timeoutSeconds?: number;
     allowUnsafeExternalContent?: boolean;
   }) => {
+    // Enterprise Interceptor Hook
+    if (params.agentHookInterceptor) {
+      const allowed = await params.agentHookInterceptor(value);
+      if (allowed === false) {
+        return "blocked";
+      }
+    }
+
     const sessionKey = value.sessionKey.trim() ? value.sessionKey.trim() : `hook:${randomUUID()}`;
     const mainSessionKey = resolveMainSessionKeyFromConfig();
     const jobId = randomUUID();
