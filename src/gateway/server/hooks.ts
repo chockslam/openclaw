@@ -18,7 +18,12 @@ export function createGatewayHooksRequestHandler(params: {
   bindHost: string;
   port: number;
   logHooks: SubsystemLogger;
-  agentHookInterceptor?: (payload: any) => Promise<boolean> | boolean;
+  agentHookInterceptor?: (
+    payload: any,
+  ) =>
+    | Promise<boolean | { blocked: boolean; response?: string }>
+    | boolean
+    | { blocked: boolean; response?: string };
 }) {
   const { deps, getHooksConfig, bindHost, port, logHooks } = params;
 
@@ -45,8 +50,12 @@ export function createGatewayHooksRequestHandler(params: {
   }) => {
     // Enterprise Interceptor Hook
     if (params.agentHookInterceptor) {
-      const allowed = await params.agentHookInterceptor(value);
-      if (allowed === false) {
+      const result = await params.agentHookInterceptor(value);
+      // Support both boolean and object response
+      if (result === false) {
+        return "blocked";
+      }
+      if (typeof result === "object" && result !== null && result.blocked) {
         return "blocked";
       }
     }

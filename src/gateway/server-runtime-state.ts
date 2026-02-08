@@ -5,6 +5,7 @@ import type { createSubsystemLogger } from "../logging/subsystem.js";
 import type { PluginRegistry } from "../plugins/registry.js";
 import type { RuntimeEnv } from "../runtime.js";
 import type { ResolvedGatewayAuth } from "./auth.js";
+import type { ChannelInterceptor } from "./channel-interceptor.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
 import type { HooksConfigResolved } from "./hooks.js";
 import type { AuthProvider } from "./interfaces/auth.js";
@@ -70,7 +71,17 @@ export async function createGatewayRuntimeState(params: {
    * Optional custom handlers (e.g. Admin API, Auth) for enterprise deployments.
    */
   customHandlers?: Array<(req: IncomingMessage, res: ServerResponse) => Promise<boolean>>;
-  agentHookInterceptor?: (payload: any) => Promise<boolean> | boolean;
+  agentHookInterceptor?: (
+    payload: any,
+  ) =>
+    | Promise<boolean | { blocked: boolean; response?: string }>
+    | boolean
+    | { blocked: boolean; response?: string };
+  /**
+   * Optional channel interceptor for enterprise deployments.
+   * Intercepts ALL channel messages before they reach the LLM.
+   */
+  channelInterceptor?: ChannelInterceptor;
 }): Promise<{
   canvasHost: CanvasHostHandler | null;
   httpServer: HttpServer;

@@ -1,6 +1,7 @@
 import type { CanvasHostServer } from "../canvas-host/server.js";
 import type { PluginServicesHandle } from "../plugins/services.js";
 import type { RuntimeEnv } from "../runtime.js";
+import type { ChannelInterceptor } from "./channel-interceptor.js";
 import type { AuthProvider } from "./interfaces/auth.js";
 import type { ClusterStateAdapter } from "./interfaces/cluster-state.js";
 import type { SecretsProvider } from "./interfaces/secrets.js";
@@ -43,6 +44,7 @@ import { EnvSecretsProvider } from "./adapters/env-secrets.js";
 import { FileStorageAdapter } from "./adapters/file-storage.js";
 import { MemoryClusterAdapter } from "./adapters/memory-cluster.js";
 import { TokenAuthProvider } from "./adapters/token-auth.js";
+import { registerChannelInterceptor } from "./channel-interceptor.js";
 import { startGatewayConfigReloader } from "./config-reload.js";
 import { ExecApprovalManager } from "./exec-approval-manager.js";
 import { NodeRegistry } from "./node-registry.js";
@@ -174,17 +176,33 @@ export type GatewayServerOptions = {
   /**
    * Optional custom HTTP handlers for enterprise deployments.
    */
-  customHandlers?: Array<(
-    req: import("node:http").IncomingMessage,
-    res: import("node:http").ServerResponse,
-  ) => Promise<boolean>>;
-  agentHookInterceptor?: (payload: any) => Promise<boolean> | boolean;
+  customHandlers?: Array<
+    (
+      req: import("node:http").IncomingMessage,
+      res: import("node:http").ServerResponse,
+    ) => Promise<boolean>
+  >;
+  agentHookInterceptor?: (
+    payload: any,
+  ) =>
+    | Promise<boolean | { blocked: boolean; response?: string }>
+    | boolean
+    | { blocked: boolean; response?: string };
+  /**
+   * Optional channel interceptor for enterprise deployments.
+   * Intercepts ALL channel messages before they reach the LLM.
+   */
+  channelInterceptor?: ChannelInterceptor;
 };
 
 export async function startGatewayServer(
   port = 18789,
   opts: GatewayServerOptions = {},
 ): Promise<GatewayServer> {
+  if (opts.channelInterceptor) {
+    registerChannelInterceptor(opts.channelInterceptor);
+  }
+
   // Ensure all default port derivations (browser/canvas) see the actual runtime port.
   process.env.OPENCLAW_GATEWAY_PORT = String(port);
   logAcceptedEnvOption({
@@ -224,8 +242,8 @@ export async function startGatewayServer(
     const issues =
       configSnapshot.issues.length > 0
         ? configSnapshot.issues
-          .map((issue) => `${issue.path || "<root>"}: ${issue.message}`)
-          .join("\n")
+            .map((issue) => `${issue.path || "<root>"}: ${issue.message}`)
+            .join("\n")
         : "Unknown validation issue.";
     throw new Error(
       `Invalid config at ${configSnapshot.path}.\n${issues}\nRun "${formatCliCommand("openclaw doctor")}" to repair, then retry.`,
@@ -352,7 +370,13 @@ export async function startGatewayServer(
     secretsProvider: opts.secretsProvider ?? new EnvSecretsProvider(),
     customHandlers: opts.customHandlers,
     agentHookInterceptor: opts.agentHookInterceptor,
+    channelInterceptor: opts.channelInterceptor,
   });
+
+  // Register channel interceptor globally (for enterprise account linking)
+  if (opts.channelInterceptor) {
+    registerChannelInterceptor(opts.channelInterceptor);
+  }
 
   // Initialize session store bridge with the configured storage adapter
   initializeSessionStoreBridge(opts.storageAdapter ?? new FileStorageAdapter());

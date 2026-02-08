@@ -10,6 +10,10 @@ import { resolveModelRefFromString } from "../../agents/model-selection.js";
 import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+import {
+  getChannelInterceptor,
+  type ChannelInterceptorPayload,
+} from "../../gateway/channel-interceptor.js";
 import { applyLinkUnderstanding } from "../../link-understanding/apply.js";
 import { applyMediaUnderstanding } from "../../media-understanding/apply.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -157,6 +161,33 @@ export async function getReplyFromConfig(
     triggerBodyNormalized,
     bodyStripped,
   } = sessionState;
+
+  // Enterprise channel interceptor - check before any processing
+  const channelInterceptor = getChannelInterceptor();
+  if (channelInterceptor) {
+    const channel = sessionCtx.Provider?.toLowerCase() ?? "unknown";
+    const providerId = sessionCtx.SenderId ?? sessionCtx.SessionKey?.split(":")[1] ?? "";
+    const interceptResult = await channelInterceptor({
+      channel,
+      sessionKey,
+      providerId,
+      // Use triggerBodyNormalized (cleaned message) or fall back to raw body
+      message: triggerBodyNormalized ?? ctx.Body ?? "",
+      accountId: sessionCtx.AccountId,
+    });
+
+    // Handle interceptor result
+    if (interceptResult === false) {
+      // Silently blocked
+      typing.cleanup();
+      return undefined;
+    }
+    if (typeof interceptResult === "object" && interceptResult.blocked) {
+      // Blocked with direct response (bypasses LLM and commands)
+      typing.cleanup();
+      return { text: interceptResult.response };
+    }
+  }
 
   await applyResetModelOverride({
     cfg,
