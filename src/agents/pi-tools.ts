@@ -103,6 +103,72 @@ function resolveExecConfig(cfg: OpenClawConfig | undefined) {
   };
 }
 
+// Satellite Tool Routing
+export interface SatelliteToolRouter {
+  shouldRoute(
+    toolName: string,
+    params: unknown,
+    context: { sessionKey?: string; agentAccountId?: string },
+  ): Promise<boolean>;
+  route(
+    toolName: string,
+    params: unknown,
+    context: { sessionKey?: string; agentAccountId?: string },
+  ): Promise<unknown>;
+}
+
+let satelliteToolRouter: SatelliteToolRouter | null = null;
+
+export function registerSatelliteToolRouter(router: SatelliteToolRouter) {
+  satelliteToolRouter = router;
+}
+
+export function getSatelliteToolRouter() {
+  return satelliteToolRouter;
+}
+
+function wrapToolsWithSatelliteRouter(
+  tools: AnyAgentTool[],
+  options?: { sessionKey?: string; agentAccountId?: string },
+): AnyAgentTool[] {
+  if (!satelliteToolRouter) {
+    return tools;
+  }
+
+  return tools.map((tool) => {
+    const originalExecute = tool.execute;
+    if (!originalExecute) {
+      return tool;
+    }
+
+    return {
+      ...tool,
+      execute: async (toolCallId, params, signal, onUpdate) => {
+        // Check if we should route this tool call to a satellite
+        // We pass the tool name and params to the router
+        // The router implementation will check if there's an active satellite for this session
+        const context = {
+          sessionKey: options?.sessionKey,
+          agentAccountId: options?.agentAccountId,
+        };
+
+        if (
+          satelliteToolRouter &&
+          (await satelliteToolRouter.shouldRoute(tool.name, params, context))
+        ) {
+          // If shouldRoute returns true, we delegate execution to the satellite
+          // The router is responsible for handling the result or error
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          return (await satelliteToolRouter.route(tool.name, params, context)) as any;
+        }
+
+        // Otherwise, fall back to local execution
+        return await originalExecute(toolCallId, params, signal, onUpdate);
+      },
+    };
+  });
+}
+
 export const __testing = {
   cleanToolSchemaForGemini,
   normalizeToolParams,
@@ -437,5 +503,8 @@ export function createOpenClawCodingTools(options?: {
   // NOTE: Keep canonical (lowercase) tool names here.
   // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names
   // on the wire and maps them back for tool dispatch.
-  return withAbort;
+  return wrapToolsWithSatelliteRouter(withAbort, {
+    sessionKey: options?.sessionKey,
+    agentAccountId: options?.agentAccountId,
+  });
 }

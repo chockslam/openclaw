@@ -97,6 +97,14 @@ const entries: SubCliEntry[] = [
     },
   },
   {
+    name: "satellite",
+    description: "Satellite Node pairing for Enterprise Gateway",
+    register: async (program) => {
+      const mod = await import("../satellite-cli.js");
+      mod.registerSatelliteCli(program);
+    },
+  },
+  {
     name: "devices",
     description: "Device pairing + token management",
     register: async (program) => {

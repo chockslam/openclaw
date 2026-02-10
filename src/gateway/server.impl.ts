@@ -102,6 +102,7 @@ const canvasRuntime = runtimeForLogger(logCanvas);
 
 export type GatewayServer = {
   close: (opts?: { reason?: string; restartExpectedMs?: number | null }) => Promise<void>;
+  httpServer: import("node:http").Server;
 };
 
 export type GatewayServerOptions = {
@@ -664,5 +665,6 @@ export async function startGatewayServer(
       skillsChangeUnsub();
       await close(opts);
     },
+    httpServer,
   };
 }

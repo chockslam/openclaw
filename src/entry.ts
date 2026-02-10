@@ -26,6 +26,10 @@ function hasExperimentalWarningSuppressed(nodeOptions: string): boolean {
 }
 
 function ensureExperimentalWarningSuppressed(): boolean {
+  // @ts-ignore - process.pkg is defined by pkg/yao-pkg
+  if (process.pkg) {
+    return false;
+  }
   if (isTruthyEnvValue(process.env.OPENCLAW_NO_RESPAWN)) {
     return false;
   }

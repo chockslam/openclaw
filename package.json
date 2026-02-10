@@ -149,7 +149,26 @@
     "tui:dev": "OPENCLAW_PROFILE=dev CLAWDBOT_PROFILE=dev node scripts/run-node.mjs --dev tui",
     "ui:build": "node scripts/ui.js build",
     "ui:dev": "node scripts/ui.js dev",
-    "ui:install": "node scripts/ui.js install"
+    "ui:install": "node scripts/ui.js install",
+    "build:satellite": "node scripts/build-satellite-binaries.js"
+  },
+  "pkg": {
+    "scripts": [
+      "dist/**/*.js",
+      "openclaw.mjs"
+    ],
+    "assets": [
+      "views/**/*",
+      "dist/**/*",
+      "openclaw.mjs",
+      "pkg-entry.js",
+      "package.json"
+    ],
+    "targets": [
+      "node22-linux-x64",
+      "node22-macos-x64",
+      "node22-win-x64"
+    ]
   },
   "dependencies": {
     "@agentclientprotocol/sdk": "0.13.1",
