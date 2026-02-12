@@ -114,8 +114,10 @@ export function registerSatelliteCli(program: Command) {
         console.log();
         console.log(chalk.bgCyan.black.bold(`   ${result.pairingCode}   `));
         console.log();
-        console.log(chalk.dim("Enter this code in your Enterprise Admin Dashboard"));
-        console.log(chalk.dim("or run: openclaw nodes approve <code>"));
+        console.log(chalk.dim("Approve here:"));
+        console.log(chalk.cyan(`   ${gatewayUrl}/pair?code=${result.pairingCode}`));
+        console.log();
+        console.log(chalk.dim("Or enter the code in your Enterprise Admin Dashboard."));
         console.log();
 
         // Save pending config
@@ -157,7 +159,7 @@ export function registerSatelliteCli(program: Command) {
               });
 
               console.log();
-              console.log(chalk.dim("Run 'openclaw satellite status' to check connection."));
+              console.log(chalk.dim("Run 'openclaw satellite serve' to start the node."));
               return;
             } else if (status.status === "revoked") {
               console.log(chalk.red("❌ Pairing was rejected."));

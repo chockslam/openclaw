@@ -47,7 +47,10 @@ const LOCATION_ACCURACY = ["coarse", "balanced", "precise"] as const;
 
 // Flattened schema: runtime validates per-action requirements.
 const NodesToolSchema = Type.Object({
-  action: stringEnum(NODES_TOOL_ACTIONS),
+  action: stringEnum(NODES_TOOL_ACTIONS, {
+    description:
+      "The action to perform. Use 'run' for shell commands (ls, dir, etc). Use 'invoke' ONLY for RPC methods.",
+  }),
   gatewayUrl: Type.Optional(Type.String()),
   gatewayToken: Type.Optional(Type.String()),
   timeoutMs: Type.Optional(Type.Number()),
@@ -79,14 +82,24 @@ const NodesToolSchema = Type.Object({
   locationTimeoutMs: Type.Optional(Type.Number()),
   desiredAccuracy: optionalStringEnum(LOCATION_ACCURACY),
   // run
-  command: Type.Optional(Type.Array(Type.String())),
+  command: Type.Optional(
+    Type.Array(Type.String(), {
+      description:
+        "For action='run': The shell command and arguments to execute (e.g. ['ls', '-la'] or ['cmd', '/c', 'dir']).",
+    }),
+  ),
   cwd: Type.Optional(Type.String()),
   env: Type.Optional(Type.Array(Type.String())),
   commandTimeoutMs: Type.Optional(Type.Number()),
   invokeTimeoutMs: Type.Optional(Type.Number()),
   needsScreenRecording: Type.Optional(Type.Boolean()),
   // invoke
-  invokeCommand: Type.Optional(Type.String()),
+  invokeCommand: Type.Optional(
+    Type.String({
+      description:
+        "For action='invoke': The RPC method name to call (e.g. 'camera.snap'). DO NOT use this for shell commands.",
+    }),
+  ),
   invokeParamsJson: Type.Optional(Type.String()),
 });
 

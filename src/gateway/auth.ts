@@ -253,7 +253,8 @@ export async function authorizeGatewayConnect(params: {
       if (user) {
         return { ok: true, method: "provider", user };
       }
-      return { ok: false, reason: "provider_rejected" };
+      // If provider returns null, it means it doesn't handle this request (e.g. technical token).
+      // Fall through to other auth methods.
     } catch (err) {
       return { ok: false, reason: "provider_error" };
     }

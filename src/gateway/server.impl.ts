@@ -183,6 +183,17 @@ export type GatewayServerOptions = {
       res: import("node:http").ServerResponse,
     ) => Promise<boolean>
   >;
+  /**
+   * Optional custom Upgrade handlers for enterprise deployments.
+   * Return true if the upgrade was handled.
+   */
+  customUpgradeHandlers?: Array<
+    (
+      req: import("node:http").IncomingMessage,
+      socket: import("node:stream").Duplex,
+      head: Buffer,
+    ) => boolean
+  >;
   agentHookInterceptor?: (
     payload: any,
   ) =>
@@ -194,6 +205,10 @@ export type GatewayServerOptions = {
    * Intercepts ALL channel messages before they reach the LLM.
    */
   channelInterceptor?: ChannelInterceptor;
+  /**
+   * Optional RPC handler overrides for enterprise deployments.
+   */
+  rpcHandlers?: import("./server-methods/types.js").GatewayRequestHandlers;
 };
 
 export async function startGatewayServer(
@@ -370,6 +385,7 @@ export async function startGatewayServer(
     authProvider: opts.authProvider,
     secretsProvider: opts.secretsProvider ?? new EnvSecretsProvider(),
     customHandlers: opts.customHandlers,
+    customUpgradeHandlers: opts.customUpgradeHandlers,
     agentHookInterceptor: opts.agentHookInterceptor,
     channelInterceptor: opts.channelInterceptor,
   });
@@ -517,6 +533,7 @@ export async function startGatewayServer(
     extraHandlers: {
       ...pluginRegistry.gatewayHandlers,
       ...execApprovalHandlers,
+      ...(opts.rpcHandlers ?? {}),
     },
     broadcast,
     context: {

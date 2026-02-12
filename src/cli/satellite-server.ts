@@ -1,5 +1,6 @@
 import { createReadTool, createWriteTool, createEditTool } from "@mariozechner/pi-coding-agent";
 import chalk from "chalk";
+import * as crypto from "node:crypto";
 import * as os from "node:os";
 import WebSocket from "ws";
 import { createExecTool } from "../agents/bash-tools.js";
@@ -8,6 +9,7 @@ interface SatelliteConfig {
   nodeId: string;
   gatewayUrl: string;
   displayName: string;
+  privateKey?: string; // Private key for signing challenges
   token?: string; // Future: auth token
 }
 
@@ -94,6 +96,42 @@ export async function runSatelliteServer(config: SatelliteConfig) {
   };
 
   const handleMessage = async (msg: any) => {
+    if (msg.type === "auth_challenge") {
+      console.log(chalk.dim("🔐 Received auth challenge, signing..."));
+
+      if (!config.privateKey) {
+        console.error(chalk.red("Error: No private key found for authentication."));
+        return;
+      }
+
+      try {
+        // Sign the challenge nonce
+        const signature = crypto.sign(
+          undefined,
+          Buffer.from(msg.nonce, "base64"),
+          config.privateKey,
+        );
+
+        // Send back verification
+        if (ws?.readyState === WebSocket.OPEN) {
+          ws.send(
+            JSON.stringify({
+              type: "auth_verify",
+              signature: signature.toString("base64"),
+            }),
+          );
+        }
+      } catch (err) {
+        console.error(chalk.red("Failed to sign challenge:"), err);
+      }
+      return;
+    }
+
+    if (msg.type === "auth_success") {
+      console.log(chalk.green("✨ Identity verified and authenticated"));
+      return;
+    }
+
     if (msg.type === "tool_call") {
       const payload = msg.payload as ToolCallPayload;
       console.log(chalk.blue(`🛠️  Executing tool: ${payload.toolName}`));

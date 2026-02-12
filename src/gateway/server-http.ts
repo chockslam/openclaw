@@ -360,11 +360,21 @@ export function attachGatewayUpgradeHandler(opts: {
   httpServer: HttpServer;
   wss: WebSocketServer;
   canvasHost: CanvasHostHandler | null;
+  customUpgradeHandlers?: Array<
+    (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => boolean
+  >;
 }) {
-  const { httpServer, wss, canvasHost } = opts;
+  const { httpServer, wss, canvasHost, customUpgradeHandlers } = opts;
   httpServer.on("upgrade", (req, socket, head) => {
     if (canvasHost?.handleUpgrade(req, socket, head)) {
       return;
+    }
+    if (customUpgradeHandlers) {
+      for (const handler of customUpgradeHandlers) {
+        if (handler(req, socket, head)) {
+          return;
+        }
+      }
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit("connection", ws, req);

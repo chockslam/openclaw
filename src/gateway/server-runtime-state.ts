@@ -71,6 +71,12 @@ export async function createGatewayRuntimeState(params: {
    * Optional custom handlers (e.g. Admin API, Auth) for enterprise deployments.
    */
   customHandlers?: Array<(req: IncomingMessage, res: ServerResponse) => Promise<boolean>>;
+  /**
+   * Optional custom Upgrade handlers for enterprise deployments.
+   */
+  customUpgradeHandlers?: Array<
+    (req: IncomingMessage, socket: import("node:stream").Duplex, head: Buffer) => boolean
+  >;
   agentHookInterceptor?: (
     payload: any,
   ) =>
@@ -207,7 +213,12 @@ export async function createGatewayRuntimeState(params: {
     maxPayload: MAX_PAYLOAD_BYTES,
   });
   for (const server of httpServers) {
-    attachGatewayUpgradeHandler({ httpServer: server, wss, canvasHost });
+    attachGatewayUpgradeHandler({
+      httpServer: server,
+      wss,
+      canvasHost,
+      customUpgradeHandlers: params.customUpgradeHandlers,
+    });
   }
 
   const clients = new Set<GatewayWsClient>();
