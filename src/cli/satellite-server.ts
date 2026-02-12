@@ -24,6 +24,17 @@ export async function runSatelliteServer(config: SatelliteConfig) {
   console.log(chalk.dim(`   Node ID: ${config.nodeId}`));
   console.log(chalk.dim(`   Gateway: ${config.gatewayUrl}`));
 
+  // TLS Enforcement: Warn if connecting over unencrypted HTTP
+  if (config.gatewayUrl.startsWith("http://")) {
+    console.log();
+    console.log(chalk.yellow("⚠️  WARNING: Connecting over unencrypted HTTP!"));
+    console.log(
+      chalk.yellow("   Private keys and tool call data will be transmitted in plaintext."),
+    );
+    console.log(chalk.yellow("   Use https:// in production environments."));
+    console.log();
+  }
+
   // Initialize Tools
   // We run with full access to the machine since this is a personal satellite node
   const tools = new Map<string, any>();

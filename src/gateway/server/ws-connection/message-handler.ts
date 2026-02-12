@@ -28,6 +28,7 @@ import { loadVoiceWakeConfig } from "../../../infra/voicewake.js";
 import { rawDataToString } from "../../../infra/ws.js";
 import { isGatewayCliClient, isWebchatClient } from "../../../utils/message-channel.js";
 import { authorizeGatewayConnect, isLocalDirectRequest } from "../../auth.js";
+import { getChannelInterceptor } from "../../channel-interceptor.js";
 import { buildDeviceAuthPayload } from "../../device-auth.js";
 import { isLoopbackAddress, isTrustedProxyAddress, resolveGatewayClientIp } from "../../net.js";
 import { resolveNodeCommandAllowlist } from "../../node-command-policy.js";
@@ -958,13 +959,61 @@ export function attachGatewayWsMessageHandler(params: {
       };
 
       void (async () => {
+        const context = buildRequestContext();
+
+        // Enterprise Channel Interception (Identity Propagation)
+        if (req.method === "channel.message") {
+          const interceptor = getChannelInterceptor();
+          if (interceptor) {
+            try {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              const params = (req.params as any) || {};
+              const interceptResult = await interceptor({
+                channel: params.channel,
+                sessionKey: params.sessionKey,
+                providerId: params.providerId,
+                message: params.message,
+                accountId: params.accountId,
+              });
+
+              if (interceptResult === false) {
+                // Silently blocked
+                return;
+              }
+              if (typeof interceptResult === "object") {
+                if ("blocked" in interceptResult && interceptResult.blocked) {
+                  // Blocked with response
+                  respond(true, { reply: interceptResult.response });
+                  return;
+                }
+                if (
+                  "allowed" in interceptResult &&
+                  interceptResult.allowed &&
+                  interceptResult.context
+                ) {
+                  // Merge context (e.g. userId) for identity propagation
+                  Object.assign(context, interceptResult.context);
+                }
+              }
+            } catch (err) {
+              logGateway.error(`Channel interceptor failed: ${String(err)}`);
+              respond(
+                false,
+                undefined,
+                errorShape(ErrorCodes.UNAVAILABLE, "Message interceptor failed"),
+              );
+              return;
+            }
+          }
+        }
+
         await handleGatewayRequest({
           req,
           respond,
           client,
           isWebchatConnect,
           extraHandlers,
-          context: buildRequestContext(),
+          context,
         });
       })().catch((err) => {
         logGateway.error(`request handler failed: ${formatForLog(err)}`);

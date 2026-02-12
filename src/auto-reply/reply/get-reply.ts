@@ -182,7 +182,11 @@ export async function getReplyFromConfig(
       typing.cleanup();
       return undefined;
     }
-    if (typeof interceptResult === "object" && interceptResult.blocked) {
+    if (
+      typeof interceptResult === "object" &&
+      "blocked" in interceptResult &&
+      interceptResult.blocked
+    ) {
       // Blocked with direct response (bypasses LLM and commands)
       typing.cleanup();
       return { text: interceptResult.response };

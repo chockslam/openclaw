@@ -11,7 +11,11 @@
  * - `false` - Block the message silently (no response)
  * - `{ blocked: true, response: string }` - Block and send a direct response
  */
-export type ChannelInterceptorResult = true | false | { blocked: true; response: string };
+export type ChannelInterceptorResult =
+  | true
+  | false
+  | { blocked: true; response: string }
+  | { allowed: true; context?: Record<string, unknown> };
 
 /**
  * Payload passed to the channel interceptor.

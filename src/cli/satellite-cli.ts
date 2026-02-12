@@ -43,9 +43,15 @@ function loadConfig(): SatelliteConfig | null {
 function saveConfig(config: SatelliteConfig): void {
   const dir = path.dirname(SATELLITE_CONFIG_PATH);
   if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   }
-  fs.writeFileSync(SATELLITE_CONFIG_PATH, JSON.stringify(config, null, 2));
+  fs.writeFileSync(SATELLITE_CONFIG_PATH, JSON.stringify(config, null, 2), { mode: 0o600 });
+  // Ensure permissions are set even if file already existed
+  try {
+    fs.chmodSync(SATELLITE_CONFIG_PATH, 0o600);
+  } catch {
+    /* best-effort */
+  }
 }
 
 function deleteConfig(): void {
@@ -68,6 +74,14 @@ export function registerSatelliteCli(program: Command) {
       console.log(chalk.cyan("🛰️  Initiating Satellite Node pairing..."));
       console.log(chalk.dim(`Gateway: ${gatewayUrl}`));
       console.log(chalk.dim(`Node name: ${opts.name}`));
+
+      // TLS Enforcement: Warn if pairing over unencrypted HTTP
+      if (gatewayUrl.startsWith("http://")) {
+        console.log();
+        console.log(chalk.yellow("⚠️  WARNING: Pairing over unencrypted HTTP!"));
+        console.log(chalk.yellow("   Your node's public key will be transmitted in plaintext."));
+        console.log(chalk.yellow("   Use https:// for production gateways."));
+      }
       console.log();
 
       const existingConfig = loadConfig();
