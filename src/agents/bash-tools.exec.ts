@@ -182,6 +182,7 @@ export type ExecToolDefaults = {
   messageProvider?: string;
   notifyOnExit?: boolean;
   cwd?: string;
+  shellConfig?: { shell: string; args: string[] };
 };
 
 export type { BashSandboxConfig } from "./bash-tools.shared.js";
@@ -432,6 +433,7 @@ async function runExecProcess(opts: {
   scopeKey?: string;
   sessionKey?: string;
   timeoutSec: number;
+  shellConfig?: { shell: string; args: string[] };
   onUpdate?: (partialResult: AgentToolResult<ExecToolDetails>) => void;
 }): Promise<ExecProcessHandle> {
   const startedAt = Date.now();
@@ -475,7 +477,7 @@ async function runExecProcess(opts: {
     child = spawned as ChildProcessWithoutNullStreams;
     stdin = child.stdin;
   } else if (opts.usePty) {
-    const { shell, args: shellArgs } = getShellConfig();
+    const { shell, args: shellArgs } = opts.shellConfig ?? getShellConfig();
     try {
       const ptyModule = (await import("@lydell/node-pty")) as unknown as {
         spawn?: PtySpawn;
@@ -542,7 +544,7 @@ async function runExecProcess(opts: {
       stdin = child.stdin;
     }
   } else {
-    const { shell, args: shellArgs } = getShellConfig();
+    const { shell, args: shellArgs } = opts.shellConfig ?? getShellConfig();
     const { child: spawned } = await spawnWithFallback({
       argv: [shell, ...shellArgs, opts.command],
       options: {
@@ -1514,6 +1516,7 @@ export function createExecTool(
         scopeKey: defaults?.scopeKey,
         sessionKey: notifySessionKey,
         timeoutSec: effectiveTimeout,
+        shellConfig: defaults?.shellConfig,
         onUpdate,
       });
 

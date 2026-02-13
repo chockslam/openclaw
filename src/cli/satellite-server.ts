@@ -42,8 +42,10 @@ export async function runSatelliteServer(config: SatelliteConfig) {
   const readTool = createReadTool(process.cwd());
   const writeTool = createWriteTool(process.cwd());
   const editTool = createEditTool(process.cwd());
+  const isWindows = os.platform() === "win32";
   const execTool = createExecTool({
     cwd: process.cwd(),
+    shellConfig: isWindows ? { shell: "cmd.exe", args: ["/c"] } : undefined,
   });
 
   tools.set("read_file", readTool);
