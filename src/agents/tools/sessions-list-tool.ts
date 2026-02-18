@@ -1,5 +1,4 @@
 import { Type } from "@sinclair/typebox";
-import path from "node:path";
 import type { AnyAgentTool } from "./common.js";
 import { loadConfig } from "../../config/config.js";
 import { callGateway } from "../../gateway/call.js";
@@ -152,10 +151,8 @@ export function createSessionsListTool(opts?: {
         });
 
         const sessionId = typeof entry.sessionId === "string" ? entry.sessionId : undefined;
-        const transcriptPath =
-          sessionId && storePath
-            ? path.join(path.dirname(storePath), `${sessionId}.jsonl`)
-            : undefined;
+        const transcriptPath = sessionId ? `session://${sessionId}` : undefined;
+        void storePath;
 
         const row: SessionListRow = {
           key: displayKey,

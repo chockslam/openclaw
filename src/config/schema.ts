@@ -234,7 +234,22 @@ const FIELD_LABELS: Record<string, string> = {
   "agents.defaults.memorySearch.model": "Memory Search Model",
   "agents.defaults.memorySearch.fallback": "Memory Search Fallback",
   "agents.defaults.memorySearch.local.modelPath": "Local Embedding Model Path",
+  "agents.defaults.memorySearch.store.driver": "Memory Search Store Driver",
   "agents.defaults.memorySearch.store.path": "Memory Search Index Path",
+  "agents.defaults.memorySearch.store.postgres.url": "Memory Search Postgres URL",
+  "agents.defaults.memorySearch.store.postgres.tenantId": "Memory Search Tenant ID",
+  "agents.defaults.memorySearch.store.postgres.schema": "Memory Search Postgres Schema",
+  "agents.defaults.memorySearch.store.postgres.sessionsTable": "Memory Search Sessions Table",
+  "agents.defaults.memorySearch.store.postgres.sessionMessagesTable":
+    "Memory Search Session Messages Table",
+  "agents.defaults.memorySearch.store.postgres.filesTable": "Memory Search Files Table",
+  "agents.defaults.memorySearch.store.postgres.chunksTable": "Memory Search Chunks Table",
+  "agents.defaults.memorySearch.store.postgres.embeddingCacheTable":
+    "Memory Search Embedding Cache Table",
+  "agents.defaults.memorySearch.store.postgres.indexStateTable": "Memory Search Index State Table",
+  "agents.defaults.memorySearch.store.postgres.maxConnections":
+    "Memory Search Postgres Max Connections",
+  "agents.defaults.memorySearch.store.postgres.ssl": "Memory Search Postgres SSL",
   "agents.defaults.memorySearch.store.vector.enabled": "Memory Search Vector Index",
   "agents.defaults.memorySearch.store.vector.extensionPath": "Memory Search Vector Extension Path",
   "agents.defaults.memorySearch.chunking.tokens": "Memory Chunk Tokens",
@@ -257,24 +272,6 @@ const FIELD_LABELS: Record<string, string> = {
   memory: "Memory",
   "memory.backend": "Memory Backend",
   "memory.citations": "Memory Citations Mode",
-  "memory.qmd.command": "QMD Binary",
-  "memory.qmd.includeDefaultMemory": "QMD Include Default Memory",
-  "memory.qmd.paths": "QMD Extra Paths",
-  "memory.qmd.paths.path": "QMD Path",
-  "memory.qmd.paths.pattern": "QMD Path Pattern",
-  "memory.qmd.paths.name": "QMD Path Name",
-  "memory.qmd.sessions.enabled": "QMD Session Indexing",
-  "memory.qmd.sessions.exportDir": "QMD Session Export Directory",
-  "memory.qmd.sessions.retentionDays": "QMD Session Retention (days)",
-  "memory.qmd.update.interval": "QMD Update Interval",
-  "memory.qmd.update.debounceMs": "QMD Update Debounce (ms)",
-  "memory.qmd.update.onBoot": "QMD Update on Startup",
-  "memory.qmd.update.embedInterval": "QMD Embed Interval",
-  "memory.qmd.limits.maxResults": "QMD Max Results",
-  "memory.qmd.limits.maxSnippetChars": "QMD Max Snippet Chars",
-  "memory.qmd.limits.maxInjectedChars": "QMD Max Injected Chars",
-  "memory.qmd.limits.timeoutMs": "QMD Search Timeout (ms)",
-  "memory.qmd.scope": "QMD Surface Scope",
   "auth.profiles": "Auth Profiles",
   "auth.order": "Auth Profile Order",
   "auth.cooldowns.billingBackoffHours": "Billing Backoff (hours)",
@@ -553,8 +550,31 @@ const FIELD_HELP: Record<string, string> = {
     "Local GGUF model path or hf: URI (node-llama-cpp).",
   "agents.defaults.memorySearch.fallback":
     'Fallback provider when embeddings fail ("openai", "gemini", "local", or "none").',
+  "agents.defaults.memorySearch.store.driver": 'Memory store driver ("sqlite" or "postgres").',
   "agents.defaults.memorySearch.store.path":
     "SQLite index path (default: ~/.openclaw/memory/{agentId}.sqlite).",
+  "agents.defaults.memorySearch.store.postgres.url":
+    "Postgres connection URL for memory index storage.",
+  "agents.defaults.memorySearch.store.postgres.tenantId":
+    'Tenant UUID used to isolate memory rows (default: "00000000-0000-0000-0000-000000000000").',
+  "agents.defaults.memorySearch.store.postgres.schema":
+    'Postgres schema for memory tables (default: "public").',
+  "agents.defaults.memorySearch.store.postgres.sessionsTable":
+    "Sessions table used to discover agent sessions (default: sessions).",
+  "agents.defaults.memorySearch.store.postgres.sessionMessagesTable":
+    "Transcript messages table used for session-memory indexing (default: session_messages).",
+  "agents.defaults.memorySearch.store.postgres.filesTable":
+    "Memory file state table name (default: memory_files).",
+  "agents.defaults.memorySearch.store.postgres.chunksTable":
+    "Memory chunks table name (default: memory_chunks).",
+  "agents.defaults.memorySearch.store.postgres.embeddingCacheTable":
+    "Embedding cache table name (default: memory_embedding_cache).",
+  "agents.defaults.memorySearch.store.postgres.indexStateTable":
+    "Index metadata table name (default: memory_index_state).",
+  "agents.defaults.memorySearch.store.postgres.maxConnections":
+    "Max Postgres pool connections for memory indexing/search (default: 10).",
+  "agents.defaults.memorySearch.store.postgres.ssl":
+    "Force SSL on/off for Postgres memory connections.",
   "agents.defaults.memorySearch.store.vector.enabled":
     "Enable sqlite-vec extension for vector search (default: true).",
   "agents.defaults.memorySearch.store.vector.extensionPath":
@@ -570,36 +590,8 @@ const FIELD_HELP: Record<string, string> = {
   "agents.defaults.memorySearch.cache.enabled":
     "Cache chunk embeddings in SQLite to speed up reindexing and frequent updates (default: true).",
   memory: "Memory backend configuration (global).",
-  "memory.backend": 'Memory backend ("builtin" for OpenClaw embeddings, "qmd" for QMD sidecar).',
+  "memory.backend": 'Memory backend ("builtin" only in enterprise Postgres migration mode).',
   "memory.citations": 'Default citation behavior ("auto", "on", or "off").',
-  "memory.qmd.command": "Path to the qmd binary (default: resolves from PATH).",
-  "memory.qmd.includeDefaultMemory":
-    "Whether to automatically index MEMORY.md + memory/**/*.md (default: true).",
-  "memory.qmd.paths":
-    "Additional directories/files to index with QMD (path + optional glob pattern).",
-  "memory.qmd.paths.path": "Absolute or ~-relative path to index via QMD.",
-  "memory.qmd.paths.pattern": "Glob pattern relative to the path root (default: **/*.md).",
-  "memory.qmd.paths.name":
-    "Optional stable name for the QMD collection (default derived from path).",
-  "memory.qmd.sessions.enabled":
-    "Enable QMD session transcript indexing (experimental, default: false).",
-  "memory.qmd.sessions.exportDir":
-    "Override directory for sanitized session exports before indexing.",
-  "memory.qmd.sessions.retentionDays":
-    "Retention window for exported sessions before pruning (default: unlimited).",
-  "memory.qmd.update.interval":
-    "How often the QMD sidecar refreshes indexes (duration string, default: 5m).",
-  "memory.qmd.update.debounceMs":
-    "Minimum delay between successive QMD refresh runs (default: 15000).",
-  "memory.qmd.update.onBoot": "Run QMD update once on gateway startup (default: true).",
-  "memory.qmd.update.embedInterval":
-    "How often QMD embeddings are refreshed (duration string, default: 60m). Set to 0 to disable periodic embed.",
-  "memory.qmd.limits.maxResults": "Max QMD results returned to the agent loop (default: 6).",
-  "memory.qmd.limits.maxSnippetChars": "Max characters per snippet pulled from QMD (default: 700).",
-  "memory.qmd.limits.maxInjectedChars": "Max total characters injected from QMD hits per turn.",
-  "memory.qmd.limits.timeoutMs": "Per-query timeout for QMD searches (default: 4000).",
-  "memory.qmd.scope":
-    "Session/channel scope for QMD recall (same syntax as session.sendPolicy; default: direct-only).",
   "agents.defaults.memorySearch.cache.maxEntries":
     "Optional cap on cached embeddings (best-effort).",
   "agents.defaults.memorySearch.sync.onSearch":

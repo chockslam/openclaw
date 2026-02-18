@@ -1,7 +1,7 @@
-import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, type MockInstance, vi } from "vitest";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
+import { loadSessionStore, saveSessionStore } from "../config/sessions.js";
 
 vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
@@ -81,10 +81,7 @@ describe("agentCommand", () => {
 
       await agentCommand({ message: "hello", to: "+1555" }, runtime);
 
-      const saved = JSON.parse(fs.readFileSync(store, "utf-8")) as Record<
-        string,
-        { sessionId: string }
-      >;
+      const saved = loadSessionStore(store) as Record<string, { sessionId: string }>;
       const entry = Object.values(saved)[0];
       expect(entry.sessionId).toBeTruthy();
     });
@@ -97,7 +94,7 @@ describe("agentCommand", () => {
 
       await agentCommand({ message: "hi", to: "+1222", thinking: "high", verbose: "on" }, runtime);
 
-      const saved = JSON.parse(fs.readFileSync(store, "utf-8")) as Record<
+      const saved = loadSessionStore(store) as Record<
         string,
         { thinkingLevel?: string; verboseLevel?: string }
       >;
@@ -114,21 +111,13 @@ describe("agentCommand", () => {
   it("resumes when session-id is provided", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions.json");
-      fs.mkdirSync(path.dirname(store), { recursive: true });
-      fs.writeFileSync(
-        store,
-        JSON.stringify(
-          {
-            foo: {
-              sessionId: "session-123",
-              updatedAt: Date.now(),
-              systemSent: true,
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await saveSessionStore(store, {
+        foo: {
+          sessionId: "session-123",
+          updatedAt: Date.now(),
+          systemSent: true,
+        },
+      });
       mockConfig(home, store);
 
       await agentCommand({ message: "resume me", sessionId: "session-123" }, runtime);
@@ -199,20 +188,12 @@ describe("agentCommand", () => {
   it("keeps explicit sessionKey even when sessionId exists elsewhere", async () => {
     await withTempHome(async (home) => {
       const store = path.join(home, "sessions.json");
-      fs.mkdirSync(path.dirname(store), { recursive: true });
-      fs.writeFileSync(
-        store,
-        JSON.stringify(
-          {
-            "agent:main:main": {
-              sessionId: "sess-main",
-              updatedAt: Date.now(),
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await saveSessionStore(store, {
+        "agent:main:main": {
+          sessionId: "sess-main",
+          updatedAt: Date.now(),
+        },
+      });
       mockConfig(home, store);
 
       await agentCommand(
@@ -227,10 +208,7 @@ describe("agentCommand", () => {
       const callArgs = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0];
       expect(callArgs?.sessionKey).toBe("agent:main:subagent:abc");
 
-      const saved = JSON.parse(fs.readFileSync(store, "utf-8")) as Record<
-        string,
-        { sessionId?: string }
-      >;
+      const saved = loadSessionStore(store) as Record<string, { sessionId?: string }>;
       expect(saved["agent:main:subagent:abc"]?.sessionId).toBe("sess-main");
     });
   });
@@ -244,7 +222,7 @@ describe("agentCommand", () => {
 
       const callArgs = vi.mocked(runEmbeddedPiAgent).mock.calls.at(-1)?.[0];
       expect(callArgs?.sessionKey).toBe("agent:ops:main");
-      expect(callArgs?.sessionFile).toContain(`${path.sep}agents${path.sep}ops${path.sep}sessions`);
+      expect(callArgs?.sessionFile).toContain("session://");
     });
   });
 

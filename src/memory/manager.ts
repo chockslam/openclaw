@@ -16,7 +16,6 @@ import type {
 } from "./types.js";
 import { resolveAgentDir, resolveAgentWorkspaceDir } from "../agents/agent-scope.js";
 import { resolveMemorySearchConfig } from "../agents/memory-search.js";
-import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { resolveUserPath } from "../utils.js";
@@ -64,7 +63,7 @@ type MemoryIndexMeta = {
 
 type SessionFileEntry = {
   path: string;
-  absPath: string;
+  sessionId: string;
   mtimeMs: number;
   size: number;
   hash: string;
@@ -91,12 +90,13 @@ const EMBEDDING_RETRY_MAX_ATTEMPTS = 3;
 const EMBEDDING_RETRY_BASE_DELAY_MS = 500;
 const EMBEDDING_RETRY_MAX_DELAY_MS = 8000;
 const BATCH_FAILURE_LIMIT = 2;
-const SESSION_DELTA_READ_CHUNK_BYTES = 64 * 1024;
 const VECTOR_LOAD_TIMEOUT_MS = 30_000;
 const EMBEDDING_QUERY_TIMEOUT_REMOTE_MS = 60_000;
 const EMBEDDING_QUERY_TIMEOUT_LOCAL_MS = 5 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_REMOTE_MS = 2 * 60_000;
 const EMBEDDING_BATCH_TIMEOUT_LOCAL_MS = 10 * 60_000;
+
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 
 const log = createSubsystemLogger("memory");
 
@@ -205,6 +205,7 @@ export class MemoryIndexManager implements MemorySearchManager {
     workspaceDir: string;
     settings: ResolvedMemorySearchConfig;
     providerResult: EmbeddingProviderResult;
+    dbFactory?: () => DatabaseSync;
   }) {
     this.cacheKey = params.cacheKey;
     this.cfg = params.cfg;
@@ -218,7 +219,7 @@ export class MemoryIndexManager implements MemorySearchManager {
     this.openAi = params.providerResult.openAi;
     this.gemini = params.providerResult.gemini;
     this.sources = new Set(params.settings.sources);
-    this.db = this.openDatabase();
+    this.db = params.dbFactory ? params.dbFactory() : this.openDatabase();
     this.providerKey = this.computeProviderKey();
     this.cache = {
       enabled: params.settings.cache.enabled,
@@ -848,16 +849,18 @@ export class MemoryIndexManager implements MemorySearchManager {
       if (this.closed) {
         return;
       }
-      const sessionFile = update.sessionFile;
-      if (!this.isSessionFileForAgent(sessionFile)) {
+      if (update.agentId && update.agentId !== this.agentId) {
         return;
       }
-      this.scheduleSessionDirty(sessionFile);
+      this.scheduleSessionDirty(update.sessionId);
     });
   }
 
-  private scheduleSessionDirty(sessionFile: string) {
-    this.sessionPendingFiles.add(sessionFile);
+  private scheduleSessionDirty(sessionId: string) {
+    if (!sessionId) {
+      return;
+    }
+    this.sessionPendingFiles.add(sessionId);
     if (this.sessionWatchTimer) {
       return;
     }
@@ -876,8 +879,8 @@ export class MemoryIndexManager implements MemorySearchManager {
     const pending = Array.from(this.sessionPendingFiles);
     this.sessionPendingFiles.clear();
     let shouldSync = false;
-    for (const sessionFile of pending) {
-      const delta = await this.updateSessionDelta(sessionFile);
+    for (const sessionId of pending) {
+      const delta = await this.updateSessionDelta(sessionId);
       if (!delta) {
         continue;
       }
@@ -892,7 +895,7 @@ export class MemoryIndexManager implements MemorySearchManager {
       if (!bytesHit && !messagesHit) {
         continue;
       }
-      this.sessionsDirtyFiles.add(sessionFile);
+      this.sessionsDirtyFiles.add(sessionId);
       this.sessionsDirty = true;
       delta.pendingBytes =
         bytesThreshold > 0 ? Math.max(0, delta.pendingBytes - bytesThreshold) : 0;
@@ -907,7 +910,7 @@ export class MemoryIndexManager implements MemorySearchManager {
     }
   }
 
-  private async updateSessionDelta(sessionFile: string): Promise<{
+  private async updateSessionDelta(sessionId: string): Promise<{
     deltaBytes: number;
     deltaMessages: number;
     pendingBytes: number;
@@ -917,17 +920,31 @@ export class MemoryIndexManager implements MemorySearchManager {
     if (!thresholds) {
       return null;
     }
-    let stat: { size: number };
-    try {
-      stat = await fs.stat(sessionFile);
-    } catch {
+    const bridge = getSessionStoreBridge();
+    const meta = await bridge.getSessionMetadata(sessionId);
+
+    if (!meta) {
       return null;
     }
-    const size = stat.size;
-    let state = this.sessionDeltas.get(sessionFile);
+
+    // In adapter mode, size might be 0. We may need content to determine real size/changes.
+    // For now, if size is 0 and we have a bridge, let's fetch content to be safe,
+    // or rely on the bridge returning a valid size if possible.
+    // Use a small optimization: if meta.size is 0, fetch content.
+    let content: string | undefined;
+    if (meta.size === 0) {
+      const raw = await bridge.getSessionContent(sessionId);
+      if (raw !== null) {
+        content = raw;
+        meta.size = Buffer.byteLength(content, "utf-8");
+      }
+    }
+
+    const size = meta.size;
+    let state = this.sessionDeltas.get(sessionId);
     if (!state) {
       state = { lastSize: 0, pendingBytes: 0, pendingMessages: 0 };
-      this.sessionDeltas.set(sessionFile, state);
+      this.sessionDeltas.set(sessionId, state);
     }
     const deltaBytes = Math.max(0, size - state.lastSize);
     if (deltaBytes === 0 && size === state.lastSize) {
@@ -939,13 +956,14 @@ export class MemoryIndexManager implements MemorySearchManager {
       };
     }
     if (size < state.lastSize) {
+      // file shrank or was reset?
       state.lastSize = size;
       state.pendingBytes += size;
       const shouldCountMessages =
         thresholds.deltaMessages > 0 &&
         (thresholds.deltaBytes <= 0 || state.pendingBytes < thresholds.deltaBytes);
       if (shouldCountMessages) {
-        state.pendingMessages += await this.countNewlines(sessionFile, 0, size);
+        state.pendingMessages += this.countNewlines(0, size, content);
       }
     } else {
       state.pendingBytes += deltaBytes;
@@ -953,11 +971,11 @@ export class MemoryIndexManager implements MemorySearchManager {
         thresholds.deltaMessages > 0 &&
         (thresholds.deltaBytes <= 0 || state.pendingBytes < thresholds.deltaBytes);
       if (shouldCountMessages) {
-        state.pendingMessages += await this.countNewlines(sessionFile, state.lastSize, size);
+        state.pendingMessages += this.countNewlines(state.lastSize, size, content);
       }
       state.lastSize = size;
     }
-    this.sessionDeltas.set(sessionFile, state);
+    this.sessionDeltas.set(sessionId, state);
     return {
       deltaBytes: thresholds.deltaBytes,
       deltaMessages: thresholds.deltaMessages,
@@ -966,52 +984,32 @@ export class MemoryIndexManager implements MemorySearchManager {
     };
   }
 
-  private async countNewlines(absPath: string, start: number, end: number): Promise<number> {
+  private countNewlines(start: number, end: number, content?: string): number {
     if (end <= start) {
       return 0;
     }
-    const handle = await fs.open(absPath, "r");
-    try {
-      let offset = start;
-      let count = 0;
-      const buffer = Buffer.alloc(SESSION_DELTA_READ_CHUNK_BYTES);
-      while (offset < end) {
-        const toRead = Math.min(buffer.length, end - offset);
-        const { bytesRead } = await handle.read(buffer, 0, toRead, offset);
-        if (bytesRead <= 0) {
-          break;
-        }
-        for (let i = 0; i < bytesRead; i += 1) {
-          if (buffer[i] === 10) {
-            count += 1;
-          }
-        }
-        offset += bytesRead;
-      }
-      return count;
-    } finally {
-      await handle.close();
+    if (content === undefined) {
+      return 0;
     }
+    const buf = Buffer.from(content, "utf-8");
+    const slice = buf.subarray(start, end);
+    let count = 0;
+    for (const byte of slice) {
+      if (byte === 10) {
+        count += 1;
+      }
+    }
+    return count;
   }
 
-  private resetSessionDelta(absPath: string, size: number): void {
-    const state = this.sessionDeltas.get(absPath);
+  private resetSessionDelta(sessionId: string, size: number): void {
+    const state = this.sessionDeltas.get(sessionId);
     if (!state) {
       return;
     }
     state.lastSize = size;
     state.pendingBytes = 0;
     state.pendingMessages = 0;
-  }
-
-  private isSessionFileForAgent(sessionFile: string): boolean {
-    if (!sessionFile) {
-      return false;
-    }
-    const sessionsDir = resolveSessionTranscriptsDirForAgent(this.agentId);
-    const resolvedFile = path.resolve(sessionFile);
-    const resolvedDir = path.resolve(sessionsDir);
-    return resolvedFile.startsWith(`${resolvedDir}${path.sep}`);
   }
 
   private ensureIntervalSync() {
@@ -1141,18 +1139,18 @@ export class MemoryIndexManager implements MemorySearchManager {
     needsFullReindex: boolean;
     progress?: MemorySyncProgressState;
   }) {
-    const files = await this.listSessionFiles();
-    const activePaths = new Set(files.map((file) => this.sessionPathForFile(file)));
+    const sessionIds = await this.listSessionIds();
+    const activePaths = new Set(sessionIds.map((sessionId) => this.sessionPathForId(sessionId)));
     const indexAll = params.needsFullReindex || this.sessionsDirtyFiles.size === 0;
     log.debug("memory sync: indexing session files", {
-      files: files.length,
+      files: sessionIds.length,
       indexAll,
       dirtyFiles: this.sessionsDirtyFiles.size,
       batch: this.batch.enabled,
       concurrency: this.getIndexConcurrency(),
     });
     if (params.progress) {
-      params.progress.total += files.length;
+      params.progress.total += sessionIds.length;
       params.progress.report({
         completed: params.progress.completed,
         total: params.progress.total,
@@ -1160,8 +1158,8 @@ export class MemoryIndexManager implements MemorySearchManager {
       });
     }
 
-    const tasks = files.map((absPath) => async () => {
-      if (!indexAll && !this.sessionsDirtyFiles.has(absPath)) {
+    const tasks = sessionIds.map((sessionId) => async () => {
+      if (!indexAll && !this.sessionsDirtyFiles.has(sessionId)) {
         if (params.progress) {
           params.progress.completed += 1;
           params.progress.report({
@@ -1171,7 +1169,7 @@ export class MemoryIndexManager implements MemorySearchManager {
         }
         return;
       }
-      const entry = await this.buildSessionEntry(absPath);
+      const entry = await this.buildSessionEntry(sessionId);
       if (!entry) {
         if (params.progress) {
           params.progress.completed += 1;
@@ -1193,11 +1191,11 @@ export class MemoryIndexManager implements MemorySearchManager {
             total: params.progress.total,
           });
         }
-        this.resetSessionDelta(absPath, entry.size);
+        this.resetSessionDelta(sessionId, entry.size);
         return;
       }
       await this.indexFile(entry, { source: "sessions", content: entry.content });
-      this.resetSessionDelta(absPath, entry.size);
+      this.resetSessionDelta(sessionId, entry.size);
       if (params.progress) {
         params.progress.completed += 1;
         params.progress.report({
@@ -1535,22 +1533,13 @@ export class MemoryIndexManager implements MemorySearchManager {
       .run(META_KEY, value);
   }
 
-  private async listSessionFiles(): Promise<string[]> {
-    const dir = resolveSessionTranscriptsDirForAgent(this.agentId);
-    try {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      return entries
-        .filter((entry) => entry.isFile())
-        .map((entry) => entry.name)
-        .filter((name) => name.endsWith(".jsonl"))
-        .map((name) => path.join(dir, name));
-    } catch {
-      return [];
-    }
+  private async listSessionIds(): Promise<string[]> {
+    const bridge = getSessionStoreBridge();
+    return await bridge.listAllSessionIds();
   }
 
-  private sessionPathForFile(absPath: string): string {
-    return path.join("sessions", path.basename(absPath)).replace(/\\/g, "/");
+  private sessionPathForId(sessionId: string): string {
+    return `sessions/${sessionId}`;
   }
 
   private normalizeSessionText(value: string): string {
@@ -1588,10 +1577,25 @@ export class MemoryIndexManager implements MemorySearchManager {
     return parts.join(" ");
   }
 
-  private async buildSessionEntry(absPath: string): Promise<SessionFileEntry | null> {
+  private async buildSessionEntry(sessionId: string): Promise<SessionFileEntry | null> {
     try {
-      const stat = await fs.stat(absPath);
-      const raw = await fs.readFile(absPath, "utf-8");
+      const bridge = getSessionStoreBridge();
+      // We need metadata for mtime/size
+      const meta = await bridge.getSessionMetadata(sessionId);
+      if (!meta) {
+        return null;
+      }
+
+      const raw = await bridge.getSessionContent(sessionId);
+      if (raw === null) {
+        return null;
+      }
+
+      // If we got content but size was 0 (adapter mode often), update size
+      if (meta.size === 0) {
+        meta.size = Buffer.byteLength(raw, "utf-8");
+      }
+
       const lines = raw.split("\n");
       const collected: string[] = [];
       for (const line of lines) {
@@ -1629,15 +1633,15 @@ export class MemoryIndexManager implements MemorySearchManager {
       }
       const content = collected.join("\n");
       return {
-        path: this.sessionPathForFile(absPath),
-        absPath,
-        mtimeMs: stat.mtimeMs,
-        size: stat.size,
+        path: this.sessionPathForId(sessionId),
+        sessionId,
+        mtimeMs: meta.mtimeMs,
+        size: meta.size,
         hash: hashText(content),
         content,
       };
     } catch (err) {
-      log.debug(`Failed reading session file ${absPath}: ${String(err)}`);
+      log.debug(`Failed reading session transcript ${sessionId}: ${String(err)}`);
       return null;
     }
   }
@@ -2258,7 +2262,24 @@ export class MemoryIndexManager implements MemorySearchManager {
     entry: MemoryFileEntry | SessionFileEntry,
     options: { source: MemorySource; content?: string },
   ) {
-    const content = options.content ?? (await fs.readFile(entry.absPath, "utf-8"));
+    let content = options.content;
+    if (content === undefined) {
+      if (options.source === "sessions") {
+        // Session transcripts are storage-adapter backed; use sessionId as the canonical key.
+        const sessionId = (entry as SessionFileEntry).sessionId;
+        const bridge = getSessionStoreBridge();
+        const raw = await bridge.getSessionContent(sessionId);
+        content = raw ?? "";
+      } else {
+        // Fallback to FS for other memory sources
+        try {
+          content = await fs.readFile((entry as MemoryFileEntry).absPath, "utf-8");
+        } catch {
+          content = "";
+        }
+      }
+    }
+
     const chunks = chunkMarkdown(content, this.settings.chunking).filter(
       (chunk) => chunk.text.trim().length > 0,
     );

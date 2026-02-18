@@ -2,31 +2,32 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../../../config/config.js";
-import { makeTempWorkspace, writeWorkspaceFile } from "../../../test-helpers/workspace.js";
+import { getSessionStoreBridge } from "../../../gateway/session-store-bridge.js";
+import { makeTempWorkspace } from "../../../test-helpers/workspace.js";
 import { createHookEvent } from "../../hooks.js";
 import handler from "./handler.js";
 
-/**
- * Create a mock session JSONL file with various entry types
- */
-function createMockSessionContent(
+async function seedMockSession(
+  sessionId: string,
   entries: Array<{ role: string; content: string } | { type: string }>,
-): string {
-  return entries
-    .map((entry) => {
-      if ("role" in entry) {
-        return JSON.stringify({
-          type: "message",
-          message: {
-            role: entry.role,
-            content: entry.content,
-          },
-        });
-      }
-      // Non-message entry (tool call, system, etc.)
-      return JSON.stringify(entry);
-    })
-    .join("\n");
+): Promise<void> {
+  const events = entries.map((entry) => {
+    if ("role" in entry) {
+      return {
+        type: "message",
+        message: {
+          role: entry.role,
+          content: entry.content,
+        },
+      };
+    }
+    return entry as Record<string, unknown>;
+  });
+  await getSessionStoreBridge().appendTranscriptEvents({
+    sessionId,
+    events,
+    createIfMissing: true,
+  });
 }
 
 describe("session-memory hook", () => {
@@ -60,21 +61,14 @@ describe("session-memory hook", () => {
 
   it("creates memory file with session content on /new command", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionId = "test-123";
 
-    // Create a mock session file with user/assistant messages
-    const sessionContent = createMockSessionContent([
+    await seedMockSession(sessionId, [
       { role: "user", content: "Hello there" },
       { role: "assistant", content: "Hi! How can I help?" },
       { role: "user", content: "What is 2+2?" },
       { role: "assistant", content: "2+2 equals 4" },
     ]);
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: sessionContent,
-    });
 
     const cfg: OpenClawConfig = {
       agents: { defaults: { workspace: tempDir } },
@@ -83,8 +77,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 
@@ -105,22 +98,15 @@ describe("session-memory hook", () => {
 
   it("filters out non-message entries (tool calls, system)", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionId = "test-123";
 
-    // Create session with mixed entry types
-    const sessionContent = createMockSessionContent([
+    await seedMockSession(sessionId, [
       { role: "user", content: "Hello" },
       { type: "tool_use", tool: "search", input: "test" },
       { role: "assistant", content: "World" },
       { type: "tool_result", result: "found it" },
       { role: "user", content: "Thanks" },
     ]);
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: sessionContent,
-    });
 
     const cfg: OpenClawConfig = {
       agents: { defaults: { workspace: tempDir } },
@@ -129,8 +115,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 
@@ -152,20 +137,14 @@ describe("session-memory hook", () => {
 
   it("filters out command messages starting with /", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionId = "test-123";
 
-    const sessionContent = createMockSessionContent([
+    await seedMockSession(sessionId, [
       { role: "user", content: "/help" },
       { role: "assistant", content: "Here is help info" },
       { role: "user", content: "Normal message" },
       { role: "user", content: "/new" },
     ]);
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: sessionContent,
-    });
 
     const cfg: OpenClawConfig = {
       agents: { defaults: { workspace: tempDir } },
@@ -174,8 +153,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 
@@ -195,20 +173,14 @@ describe("session-memory hook", () => {
 
   it("respects custom messages config (limits to N messages)", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionId = "test-123";
 
     // Create 10 messages
     const entries = [];
     for (let i = 1; i <= 10; i++) {
       entries.push({ role: "user", content: `Message ${i}` });
     }
-    const sessionContent = createMockSessionContent(entries);
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: sessionContent,
-    });
+    await seedMockSession(sessionId, entries);
 
     // Configure to only include last 3 messages
     const cfg: OpenClawConfig = {
@@ -225,8 +197,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 
@@ -246,8 +217,7 @@ describe("session-memory hook", () => {
 
   it("filters messages before slicing (fix for #2681)", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionId = "test-123";
 
     // Create session with many tool entries interspersed with messages
     // This tests that we filter FIRST, then slice - not the other way around
@@ -263,12 +233,7 @@ describe("session-memory hook", () => {
       { type: "tool_result", result: "result3" },
       { role: "assistant", content: "Fourth message" },
     ];
-    const sessionContent = createMockSessionContent(entries);
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: sessionContent,
-    });
+    await seedMockSession(sessionId, entries);
 
     // Request 3 messages - if we sliced first, we'd only get 1-2 messages
     // because the last 3 lines include tool entries
@@ -286,8 +251,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 
@@ -306,14 +270,7 @@ describe("session-memory hook", () => {
 
   it("handles empty session files gracefully", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
-
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: "",
-    });
+    const sessionId = "test-123";
 
     const cfg: OpenClawConfig = {
       agents: { defaults: { workspace: tempDir } },
@@ -322,8 +279,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 
@@ -338,19 +294,13 @@ describe("session-memory hook", () => {
 
   it("handles session files with fewer messages than requested", async () => {
     const tempDir = await makeTempWorkspace("openclaw-session-memory-");
-    const sessionsDir = path.join(tempDir, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
+    const sessionId = "test-123";
 
     // Only 2 messages but requesting 15 (default)
-    const sessionContent = createMockSessionContent([
+    await seedMockSession(sessionId, [
       { role: "user", content: "Only message 1" },
       { role: "assistant", content: "Only message 2" },
     ]);
-    const sessionFile = await writeWorkspaceFile({
-      dir: sessionsDir,
-      name: "test-session.jsonl",
-      content: sessionContent,
-    });
 
     const cfg: OpenClawConfig = {
       agents: { defaults: { workspace: tempDir } },
@@ -359,8 +309,7 @@ describe("session-memory hook", () => {
     const event = createHookEvent("command", "new", "agent:main:main", {
       cfg,
       previousSessionEntry: {
-        sessionId: "test-123",
-        sessionFile,
+        sessionId,
       },
     });
 

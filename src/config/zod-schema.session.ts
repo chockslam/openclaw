@@ -82,6 +82,7 @@ export const SessionSchema = z
       })
       .strict()
       .optional(),
+    retentionDays: z.number().int().positive().optional(),
   })
   .strict()
   .optional();

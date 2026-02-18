@@ -2,12 +2,12 @@ import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { SessionEntry } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
-import * as sessions from "../../config/sessions.js";
+import { loadSessionStore, saveSessionStore, type SessionEntry } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { createMockTypingController } from "./test-helpers.js";
 
 const runEmbeddedPiAgentMock = vi.fn();
@@ -132,14 +132,16 @@ describe("runReplyAgent typing (heartbeat)", () => {
     try {
       const sessionId = "session";
       const storePath = path.join(stateDir, "sessions", "sessions.json");
-      const transcriptPath = sessions.resolveSessionTranscriptPath(sessionId);
-      const sessionEntry = { sessionId, updatedAt: Date.now(), sessionFile: transcriptPath };
+      const sessionEntry = { sessionId, updatedAt: Date.now() };
       const sessionStore = { main: sessionEntry };
 
-      await fs.mkdir(path.dirname(storePath), { recursive: true });
-      await fs.writeFile(storePath, JSON.stringify(sessionStore), "utf-8");
-      await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-      await fs.writeFile(transcriptPath, "ok", "utf-8");
+      await saveSessionStore(storePath, sessionStore);
+      await getSessionStoreBridge().appendTranscriptEvent({
+        sessionId,
+        storePath,
+        event: { type: "message", message: { role: "user", content: "ok" } },
+        createIfMissing: true,
+      });
 
       runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
         throw new Error(
@@ -163,7 +165,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       expect(payload.text?.toLowerCase()).toContain("reset");
       expect(sessionStore.main.sessionId).not.toBe(sessionId);
 
-      const persisted = JSON.parse(await fs.readFile(storePath, "utf-8"));
+      const persisted = loadSessionStore(storePath);
       expect(persisted.main.sessionId).toBe(sessionStore.main.sessionId);
     } finally {
       if (prevStateDir) {
@@ -181,14 +183,16 @@ describe("runReplyAgent typing (heartbeat)", () => {
     try {
       const sessionId = "session";
       const storePath = path.join(stateDir, "sessions", "sessions.json");
-      const transcriptPath = sessions.resolveSessionTranscriptPath(sessionId);
-      const sessionEntry = { sessionId, updatedAt: Date.now(), sessionFile: transcriptPath };
+      const sessionEntry = { sessionId, updatedAt: Date.now() };
       const sessionStore = { main: sessionEntry };
 
-      await fs.mkdir(path.dirname(storePath), { recursive: true });
-      await fs.writeFile(storePath, JSON.stringify(sessionStore), "utf-8");
-      await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-      await fs.writeFile(transcriptPath, "ok", "utf-8");
+      await saveSessionStore(storePath, sessionStore);
+      await getSessionStoreBridge().appendTranscriptEvent({
+        sessionId,
+        storePath,
+        event: { type: "message", message: { role: "user", content: "ok" } },
+        createIfMissing: true,
+      });
 
       runEmbeddedPiAgentMock.mockImplementationOnce(async () => ({
         payloads: [{ text: "Context overflow: prompt too large", isError: true }],
@@ -217,7 +221,7 @@ describe("runReplyAgent typing (heartbeat)", () => {
       expect(payload.text?.toLowerCase()).toContain("reset");
       expect(sessionStore.main.sessionId).not.toBe(sessionId);
 
-      const persisted = JSON.parse(await fs.readFile(storePath, "utf-8"));
+      const persisted = loadSessionStore(storePath);
       expect(persisted.main.sessionId).toBe(sessionStore.main.sessionId);
     } finally {
       if (prevStateDir) {
@@ -235,14 +239,16 @@ describe("runReplyAgent typing (heartbeat)", () => {
     try {
       const sessionId = "session";
       const storePath = path.join(stateDir, "sessions", "sessions.json");
-      const transcriptPath = sessions.resolveSessionTranscriptPath(sessionId);
-      const sessionEntry = { sessionId, updatedAt: Date.now(), sessionFile: transcriptPath };
+      const sessionEntry = { sessionId, updatedAt: Date.now() };
       const sessionStore = { main: sessionEntry };
 
-      await fs.mkdir(path.dirname(storePath), { recursive: true });
-      await fs.writeFile(storePath, JSON.stringify(sessionStore), "utf-8");
-      await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-      await fs.writeFile(transcriptPath, "ok", "utf-8");
+      await saveSessionStore(storePath, sessionStore);
+      await getSessionStoreBridge().appendTranscriptEvent({
+        sessionId,
+        storePath,
+        event: { type: "message", message: { role: "user", content: "ok" } },
+        createIfMissing: true,
+      });
 
       runEmbeddedPiAgentMock.mockImplementationOnce(async () => ({
         payloads: [{ text: "Message ordering conflict - please try again.", isError: true }],
@@ -269,9 +275,13 @@ describe("runReplyAgent typing (heartbeat)", () => {
       });
       expect(payload.text?.toLowerCase()).toContain("reset");
       expect(sessionStore.main.sessionId).not.toBe(sessionId);
-      await expect(fs.access(transcriptPath)).rejects.toBeDefined();
+      const events = await getSessionStoreBridge().readTranscriptEvents({
+        sessionId,
+        order: "asc",
+      });
+      expect(events).toHaveLength(0);
 
-      const persisted = JSON.parse(await fs.readFile(storePath, "utf-8"));
+      const persisted = loadSessionStore(storePath);
       expect(persisted.main.sessionId).toBe(sessionStore.main.sessionId);
     } finally {
       if (prevStateDir) {

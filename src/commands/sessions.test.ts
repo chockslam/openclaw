@@ -1,7 +1,7 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMockStorageAdapter } from "../../test/helpers/mock-storage-adapter.js";
+import { saveSessionStore, type SessionEntry } from "../config/sessions.js";
+import { initializeSessionStoreBridge } from "../gateway/session-store-bridge.js";
 
 // Disable colors for deterministic snapshots.
 process.env.FORCE_COLOR = "0";
@@ -40,17 +40,15 @@ const makeRuntime = () => {
   } as const;
 };
 
-const writeStore = (data: unknown) => {
-  const file = path.join(
-    os.tmpdir(),
-    `sessions-${Date.now()}-${Math.random().toString(16).slice(2)}.json`,
-  );
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
+const writeStore = async (data: unknown) => {
+  const file = `test://sessions-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  await saveSessionStore(file, data as Record<string, SessionEntry>);
   return file;
 };
 
 describe("sessionsCommand", () => {
   beforeEach(() => {
+    initializeSessionStoreBridge(createMockStorageAdapter());
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2025-12-06T00:00:00Z"));
   });
@@ -60,7 +58,7 @@ describe("sessionsCommand", () => {
   });
 
   it("renders a tabular view with token percentages", async () => {
-    const store = writeStore({
+    const store = await writeStore({
       "+15555550123": {
         sessionId: "abc123",
         updatedAt: Date.now() - 45 * 60_000,
@@ -73,8 +71,6 @@ describe("sessionsCommand", () => {
     const { runtime, logs } = makeRuntime();
     await sessionsCommand({ store }, runtime);
 
-    fs.rmSync(store);
-
     const tableHeader = logs.find((line) => line.includes("Tokens (ctx %"));
     expect(tableHeader).toBeTruthy();
 
@@ -85,7 +81,7 @@ describe("sessionsCommand", () => {
   });
 
   it("shows placeholder rows when tokens are missing", async () => {
-    const store = writeStore({
+    const store = await writeStore({
       "discord:group:demo": {
         sessionId: "xyz",
         updatedAt: Date.now() - 5 * 60_000,
@@ -95,8 +91,6 @@ describe("sessionsCommand", () => {
 
     const { runtime, logs } = makeRuntime();
     await sessionsCommand({ store }, runtime);
-
-    fs.rmSync(store);
 
     const row = logs.find((line) => line.includes("discord:group:demo")) ?? "";
     expect(row).toContain("-".padEnd(20));

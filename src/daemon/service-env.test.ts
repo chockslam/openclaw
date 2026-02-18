@@ -244,6 +244,26 @@ describe("buildServiceEnvironment", () => {
       expect(env.OPENCLAW_LAUNCHD_LABEL).toBe("ai.openclaw.work");
     }
   });
+
+  it("passes postgres runtime env vars through for db-native gateway services", () => {
+    const env = buildServiceEnvironment({
+      env: {
+        HOME: "/home/user",
+        OPENCLAW_STORAGE_POSTGRES_URL: "postgres://storage",
+        OPENCLAW_STORAGE_POSTGRES_SCHEMA: "openclaw",
+        OPENCLAW_STORAGE_POSTGRES_TENANT_ID: "00000000-0000-0000-0000-000000000001",
+        OPENCLAW_MEMORY_POSTGRES_URL: "postgres://memory",
+        POSTGRES_URL: "postgres://shared",
+      },
+      port: 18789,
+    });
+
+    expect(env.OPENCLAW_STORAGE_POSTGRES_URL).toBe("postgres://storage");
+    expect(env.OPENCLAW_STORAGE_POSTGRES_SCHEMA).toBe("openclaw");
+    expect(env.OPENCLAW_STORAGE_POSTGRES_TENANT_ID).toBe("00000000-0000-0000-0000-000000000001");
+    expect(env.OPENCLAW_MEMORY_POSTGRES_URL).toBe("postgres://memory");
+    expect(env.POSTGRES_URL).toBe("postgres://shared");
+  });
 });
 
 describe("buildNodeServiceEnvironment", () => {

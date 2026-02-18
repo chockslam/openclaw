@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import path from "node:path";
 import { resolveQueueSettings } from "../auto-reply/reply/queue.js";
 import { loadConfig } from "../config/config.js";
 import {
@@ -241,8 +240,8 @@ async function buildSubagentStatsLine(params: {
   });
 
   const sessionId = entry?.sessionId;
-  const transcriptPath =
-    sessionId && storePath ? path.join(path.dirname(storePath), `${sessionId}.jsonl`) : undefined;
+  const transcriptPath = sessionId ? `session://${sessionId}` : undefined;
+  void storePath;
 
   const input = entry?.inputTokens;
   const output = entry?.outputTokens;

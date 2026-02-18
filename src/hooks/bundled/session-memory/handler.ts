@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import type { OpenClawConfig } from "../../../config/config.js";
 import type { HookHandler } from "../../hooks.js";
 import { resolveAgentWorkspaceDir } from "../../../agents/agent-scope.js";
+import { getSessionStoreBridge } from "../../../gateway/session-store-bridge.js";
 import { resolveAgentIdFromSessionKey } from "../../../routing/session-key.js";
 import { resolveHookConfig } from "../../config.js";
 
@@ -19,11 +20,14 @@ import { resolveHookConfig } from "../../config.js";
  * Read recent messages from session file for slug generation
  */
 async function getRecentSessionContent(
-  sessionFilePath: string,
+  sessionId: string,
   messageCount: number = 15,
 ): Promise<string | null> {
   try {
-    const content = await fs.readFile(sessionFilePath, "utf-8");
+    const content = await getSessionStoreBridge().getSessionContent(sessionId);
+    if (content == null) {
+      return null;
+    }
     const lines = content.trim().split("\n");
 
     // Parse JSONL and extract user/assistant messages first
@@ -90,13 +94,9 @@ const saveSessionToMemory: HookHandler = async (event) => {
       unknown
     >;
     const currentSessionId = sessionEntry.sessionId as string;
-    const currentSessionFile = sessionEntry.sessionFile as string;
 
     console.log("[session-memory] Current sessionId:", currentSessionId);
-    console.log("[session-memory] Current sessionFile:", currentSessionFile);
     console.log("[session-memory] cfg present:", !!cfg);
-
-    const sessionFile = currentSessionFile || undefined;
 
     // Read message count from hook config (default: 15)
     const hookConfig = resolveHookConfig(cfg, "session-memory");
@@ -108,9 +108,9 @@ const saveSessionToMemory: HookHandler = async (event) => {
     let slug: string | null = null;
     let sessionContent: string | null = null;
 
-    if (sessionFile) {
+    if (currentSessionId) {
       // Get recent conversation content
-      sessionContent = await getRecentSessionContent(sessionFile, messageCount);
+      sessionContent = await getRecentSessionContent(currentSessionId, messageCount);
       console.log("[session-memory] sessionContent length:", sessionContent?.length || 0);
 
       if (sessionContent && cfg) {

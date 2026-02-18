@@ -8,6 +8,10 @@ import {
   readConfigFileSnapshot,
   resolveGatewayPort,
 } from "../../config/config.js";
+import {
+  closeRuntimeStorageAdapter,
+  createRuntimeStorageAdapter,
+} from "../../gateway/adapters/runtime-storage.js";
 import { resolveGatewayAuth } from "../../gateway/auth.js";
 import { startGatewayServer } from "../../gateway/server.js";
 import { setGatewayWsLogStyle } from "../../gateway/ws-logging.js";
@@ -258,28 +262,34 @@ async function runGatewayCommand(opts: GatewayRunOpts) {
   }
 
   try {
-    await runGatewayLoop({
-      runtime: defaultRuntime,
-      start: async () =>
-        await startGatewayServer(port, {
-          bind,
-          auth:
-            authMode || passwordRaw || tokenRaw || authModeRaw
-              ? {
-                  mode: authMode ?? undefined,
-                  token: tokenRaw,
-                  password: passwordRaw,
-                }
-              : undefined,
-          tailscale:
-            tailscaleMode || opts.tailscaleResetOnExit
-              ? {
-                  mode: tailscaleMode ?? undefined,
-                  resetOnExit: Boolean(opts.tailscaleResetOnExit),
-                }
-              : undefined,
-        }),
-    });
+    const storageAdapter = await createRuntimeStorageAdapter();
+    try {
+      await runGatewayLoop({
+        runtime: defaultRuntime,
+        start: async () =>
+          await startGatewayServer(port, {
+            bind,
+            auth:
+              authMode || passwordRaw || tokenRaw || authModeRaw
+                ? {
+                    mode: authMode ?? undefined,
+                    token: tokenRaw,
+                    password: passwordRaw,
+                  }
+                : undefined,
+            tailscale:
+              tailscaleMode || opts.tailscaleResetOnExit
+                ? {
+                    mode: tailscaleMode ?? undefined,
+                    resetOnExit: Boolean(opts.tailscaleResetOnExit),
+                  }
+                : undefined,
+            storageAdapter,
+          }),
+      });
+    } finally {
+      await closeRuntimeStorageAdapter(storageAdapter).catch(() => {});
+    }
   } catch (err) {
     if (
       err instanceof GatewayLockError ||

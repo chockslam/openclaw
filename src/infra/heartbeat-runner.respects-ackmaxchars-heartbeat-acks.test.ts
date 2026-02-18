@@ -8,7 +8,12 @@ import { setTelegramRuntime } from "../../extensions/telegram/src/runtime.js";
 import { whatsappPlugin } from "../../extensions/whatsapp/src/channel.js";
 import { setWhatsAppRuntime } from "../../extensions/whatsapp/src/runtime.js";
 import * as replyModule from "../auto-reply/reply.js";
-import { resolveMainSessionKey } from "../config/sessions.js";
+import {
+  loadSessionStore,
+  resolveMainSessionKey,
+  saveSessionStore,
+  type SessionEntry,
+} from "../config/sessions.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
@@ -28,6 +33,14 @@ beforeEach(() => {
     ]),
   );
 });
+
+async function seedSessionStore(
+  storePath: string,
+  sessionKey: string,
+  entry: SessionEntry,
+): Promise<void> {
+  await saveSessionStore(storePath, { [sessionKey]: entry });
+}
 
 describe("resolveHeartbeatIntervalMs", () => {
   it("respects ackMaxChars for heartbeat acks", async () => {
@@ -51,22 +64,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "whatsapp",
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+      });
 
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK 🦞" });
       const sendWhatsApp = vi.fn().mockResolvedValue({
@@ -112,22 +115,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "whatsapp",
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+      });
 
       replySpy.mockResolvedValue({ text: "HEARTBEAT_OK" });
       const sendWhatsApp = vi.fn().mockResolvedValue({
@@ -179,22 +172,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "whatsapp",
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+      });
 
       const sendWhatsApp = vi.fn().mockResolvedValue({
         messageId: "m1",
@@ -241,22 +224,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "whatsapp",
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+      });
 
       replySpy.mockResolvedValue({ text: "<b>HEARTBEAT_OK</b>" });
       const sendWhatsApp = vi.fn().mockResolvedValue({
@@ -304,33 +277,22 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: originalUpdatedAt,
-              lastChannel: "whatsapp",
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: originalUpdatedAt,
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+      });
 
       replySpy.mockImplementationOnce(async () => {
-        const raw = await fs.readFile(storePath, "utf-8");
-        const parsed = JSON.parse(raw) as Record<string, { updatedAt?: number } | undefined>;
+        const parsed = loadSessionStore(storePath) as Record<string, { updatedAt?: number }>;
         if (parsed[sessionKey]) {
           parsed[sessionKey] = {
             ...parsed[sessionKey],
             updatedAt: bumpedUpdatedAt,
           };
+          await saveSessionStore(storePath, parsed as Record<string, SessionEntry>);
         }
-        await fs.writeFile(storePath, JSON.stringify(parsed, null, 2));
         return { text: "" };
       });
 
@@ -344,10 +306,7 @@ describe("resolveHeartbeatIntervalMs", () => {
         },
       });
 
-      const finalStore = JSON.parse(await fs.readFile(storePath, "utf-8")) as Record<
-        string,
-        { updatedAt?: number } | undefined
-      >;
+      const finalStore = loadSessionStore(storePath) as Record<string, { updatedAt?: number }>;
       expect(finalStore[sessionKey]?.updatedAt).toBe(bumpedUpdatedAt);
     } finally {
       replySpy.mockRestore();
@@ -372,22 +331,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "whatsapp",
-              lastProvider: "whatsapp",
-              lastTo: "+1555",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "whatsapp",
+        lastTo: "+1555",
+      });
 
       replySpy.mockResolvedValue({ text: "Heartbeat alert" });
       const sendWhatsApp = vi.fn().mockResolvedValue({
@@ -434,22 +383,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "telegram",
-              lastProvider: "telegram",
-              lastTo: "123456",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "telegram",
+        lastTo: "123456",
+      });
 
       replySpy.mockResolvedValue({ text: "Hello from heartbeat" });
       const sendTelegram = vi.fn().mockResolvedValue({
@@ -508,22 +447,12 @@ describe("resolveHeartbeatIntervalMs", () => {
       };
       const sessionKey = resolveMainSessionKey(cfg);
 
-      await fs.writeFile(
-        storePath,
-        JSON.stringify(
-          {
-            [sessionKey]: {
-              sessionId: "sid",
-              updatedAt: Date.now(),
-              lastChannel: "telegram",
-              lastProvider: "telegram",
-              lastTo: "123456",
-            },
-          },
-          null,
-          2,
-        ),
-      );
+      await seedSessionStore(storePath, sessionKey, {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        lastChannel: "telegram",
+        lastTo: "123456",
+      });
 
       replySpy.mockResolvedValue({ text: "Hello from heartbeat" });
       const sendTelegram = vi.fn().mockResolvedValue({

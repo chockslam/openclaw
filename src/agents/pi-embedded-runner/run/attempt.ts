@@ -1,7 +1,7 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
-import { createAgentSession, SessionManager, SettingsManager } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SettingsManager } from "@mariozechner/pi-coding-agent";
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
@@ -46,9 +46,11 @@ import { toClientToolDefinitions } from "../../pi-tool-definition-adapter.js";
 import { createOpenClawCodingTools } from "../../pi-tools.js";
 import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
-import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
+import {
+  loadDbSessionRuntime,
+  withDbSessionLock,
+} from "../../session-runtime/db-session-runtime.js";
 import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
-import { acquireSessionWriteLock } from "../../session-write-lock.js";
 import {
   applySkillEnvOverrides,
   applySkillEnvOverridesFromSnapshot,
@@ -77,8 +79,6 @@ import {
   setActiveEmbeddedRun,
 } from "../runs.js";
 import { buildEmbeddedSandboxInfo } from "../sandbox-info.js";
-import { prewarmSessionFile, trackSessionManagerAccess } from "../session-manager-cache.js";
-import { prepareSessionManagerForRun } from "../session-manager-init.js";
 import {
   applySystemPromptOverrideToSession,
   buildEmbeddedSystemPrompt,
@@ -399,516 +399,516 @@ export async function runEmbeddedAttempt(
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
     const systemPromptText = systemPromptOverride();
 
-    const sessionLock = await acquireSessionWriteLock({
-      sessionFile: params.sessionFile,
-    });
-
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
+    let dbSessionRuntime: Awaited<ReturnType<typeof loadDbSessionRuntime>> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
-    try {
-      await repairSessionFileIfNeeded({
-        sessionFile: params.sessionFile,
-        warn: (message) => log.warn(message),
-      });
-      const hadSessionFile = await fs
-        .stat(params.sessionFile)
-        .then(() => true)
-        .catch(() => false);
-
-      const transcriptPolicy = resolveTranscriptPolicy({
-        modelApi: params.model?.api,
-        provider: params.provider,
-        modelId: params.modelId,
-      });
-
-      await prewarmSessionFile(params.sessionFile);
-      sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
-        agentId: sessionAgentId,
-        sessionKey: params.sessionKey,
-        allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
-      });
-      trackSessionManagerAccess(params.sessionFile);
-
-      await prepareSessionManagerForRun({
-        sessionManager,
-        sessionFile: params.sessionFile,
-        hadSessionFile,
+    return await withDbSessionLock(
+      {
         sessionId: params.sessionId,
-        cwd: effectiveWorkspace,
-      });
-
-      const settingsManager = SettingsManager.create(effectiveWorkspace, agentDir);
-      ensurePiCompactionReserveTokens({
-        settingsManager,
-        minReserveTokens: resolveCompactionReserveTokensFloor(params.config),
-      });
-
-      // Call for side effects (sets compaction/pruning runtime state)
-      buildEmbeddedExtensionPaths({
-        cfg: params.config,
-        sessionManager,
-        provider: params.provider,
-        modelId: params.modelId,
-        model: params.model,
-      });
-
-      const { builtInTools, customTools } = splitSdkTools({
-        tools,
-        sandboxEnabled: !!sandbox?.enabled,
-      });
-
-      // Add client tools (OpenResponses hosted tools) to customTools
-      let clientToolCallDetected: { name: string; params: Record<string, unknown> } | null = null;
-      const clientToolDefs = params.clientTools
-        ? toClientToolDefinitions(
-            params.clientTools,
-            (toolName, toolParams) => {
-              clientToolCallDetected = { name: toolName, params: toolParams };
-            },
-            {
-              agentId: sessionAgentId,
-              sessionKey: params.sessionKey,
-            },
-          )
-        : [];
-
-      const allCustomTools = [...customTools, ...clientToolDefs];
-
-      ({ session } = await createAgentSession({
-        cwd: resolvedWorkspace,
-        agentDir,
-        authStorage: params.authStorage,
-        modelRegistry: params.modelRegistry,
-        model: params.model,
-        thinkingLevel: mapThinkingLevel(params.thinkLevel),
-        tools: builtInTools,
-        customTools: allCustomTools,
-        sessionManager,
-        settingsManager,
-      }));
-      applySystemPromptOverrideToSession(session, systemPromptText);
-      if (!session) {
-        throw new Error("Embedded agent session missing");
-      }
-      const activeSession = session;
-      const cacheTrace = createCacheTrace({
-        cfg: params.config,
-        env: process.env,
-        runId: params.runId,
-        sessionId: activeSession.sessionId,
-        sessionKey: params.sessionKey,
-        provider: params.provider,
-        modelId: params.modelId,
-        modelApi: params.model.api,
-        workspaceDir: params.workspaceDir,
-      });
-      const anthropicPayloadLogger = createAnthropicPayloadLogger({
-        env: process.env,
-        runId: params.runId,
-        sessionId: activeSession.sessionId,
-        sessionKey: params.sessionKey,
-        provider: params.provider,
-        modelId: params.modelId,
-        modelApi: params.model.api,
-        workspaceDir: params.workspaceDir,
-      });
-
-      // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
-      activeSession.agent.streamFn = streamSimple;
-
-      applyExtraParamsToAgent(
-        activeSession.agent,
-        params.config,
-        params.provider,
-        params.modelId,
-        params.streamParams,
-      );
-
-      if (cacheTrace) {
-        cacheTrace.recordStage("session:loaded", {
-          messages: activeSession.messages,
-          system: systemPromptText,
-          note: "after session create",
-        });
-        activeSession.agent.streamFn = cacheTrace.wrapStreamFn(activeSession.agent.streamFn);
-      }
-      if (anthropicPayloadLogger) {
-        activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
-          activeSession.agent.streamFn,
-        );
-      }
-
-      try {
-        const prior = await sanitizeSessionHistory({
-          messages: activeSession.messages,
-          modelApi: params.model.api,
-          modelId: params.modelId,
+        agentId: sessionAgentId,
+      },
+      async () => {
+        const transcriptPolicy = resolveTranscriptPolicy({
+          modelApi: params.model?.api,
           provider: params.provider,
-          sessionManager,
+          modelId: params.modelId,
+        });
+
+        dbSessionRuntime = await loadDbSessionRuntime({
           sessionId: params.sessionId,
-          policy: transcriptPolicy,
+          agentId: sessionAgentId,
+          cwd: effectiveWorkspace,
         });
-        cacheTrace?.recordStage("session:sanitized", { messages: prior });
-        const validatedGemini = transcriptPolicy.validateGeminiTurns
-          ? validateGeminiTurns(prior)
-          : prior;
-        const validated = transcriptPolicy.validateAnthropicTurns
-          ? validateAnthropicTurns(validatedGemini)
-          : validatedGemini;
-        const limited = limitHistoryTurns(
-          validated,
-          getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
-        );
-        cacheTrace?.recordStage("session:limited", { messages: limited });
-        if (limited.length > 0) {
-          activeSession.agent.replaceMessages(limited);
-        }
-      } catch (err) {
-        sessionManager.flushPendingToolResults?.();
-        activeSession.dispose();
-        throw err;
-      }
-
-      let aborted = Boolean(params.abortSignal?.aborted);
-      let timedOut = false;
-      const getAbortReason = (signal: AbortSignal): unknown =>
-        "reason" in signal ? (signal as { reason?: unknown }).reason : undefined;
-      const makeTimeoutAbortReason = (): Error => {
-        const err = new Error("request timed out");
-        err.name = "TimeoutError";
-        return err;
-      };
-      const makeAbortError = (signal: AbortSignal): Error => {
-        const reason = getAbortReason(signal);
-        const err = reason ? new Error("aborted", { cause: reason }) : new Error("aborted");
-        err.name = "AbortError";
-        return err;
-      };
-      const abortRun = (isTimeout = false, reason?: unknown) => {
-        aborted = true;
-        if (isTimeout) {
-          timedOut = true;
-        }
-        if (isTimeout) {
-          runAbortController.abort(reason ?? makeTimeoutAbortReason());
-        } else {
-          runAbortController.abort(reason);
-        }
-        void activeSession.abort();
-      };
-      const abortable = <T>(promise: Promise<T>): Promise<T> => {
-        const signal = runAbortController.signal;
-        if (signal.aborted) {
-          return Promise.reject(makeAbortError(signal));
-        }
-        return new Promise<T>((resolve, reject) => {
-          const onAbort = () => {
-            signal.removeEventListener("abort", onAbort);
-            reject(makeAbortError(signal));
-          };
-          signal.addEventListener("abort", onAbort, { once: true });
-          promise.then(
-            (value) => {
-              signal.removeEventListener("abort", onAbort);
-              resolve(value);
-            },
-            (err) => {
-              signal.removeEventListener("abort", onAbort);
-              reject(err);
-            },
-          );
+        sessionManager = guardSessionManager(dbSessionRuntime.sessionManager, {
+          agentId: sessionAgentId,
+          sessionKey: params.sessionKey,
+          allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
         });
-      };
 
-      const subscription = subscribeEmbeddedPiSession({
-        session: activeSession,
-        runId: params.runId,
-        verboseLevel: params.verboseLevel,
-        reasoningMode: params.reasoningLevel ?? "off",
-        toolResultFormat: params.toolResultFormat,
-        shouldEmitToolResult: params.shouldEmitToolResult,
-        shouldEmitToolOutput: params.shouldEmitToolOutput,
-        onToolResult: params.onToolResult,
-        onReasoningStream: params.onReasoningStream,
-        onBlockReply: params.onBlockReply,
-        onBlockReplyFlush: params.onBlockReplyFlush,
-        blockReplyBreak: params.blockReplyBreak,
-        blockReplyChunking: params.blockReplyChunking,
-        onPartialReply: params.onPartialReply,
-        onAssistantMessageStart: params.onAssistantMessageStart,
-        onAgentEvent: params.onAgentEvent,
-        enforceFinalTag: params.enforceFinalTag,
-      });
+        const settingsManager = SettingsManager.create(effectiveWorkspace, agentDir);
+        ensurePiCompactionReserveTokens({
+          settingsManager,
+          minReserveTokens: resolveCompactionReserveTokensFloor(params.config),
+        });
 
-      const {
-        assistantTexts,
-        toolMetas,
-        unsubscribe,
-        waitForCompactionRetry,
-        getMessagingToolSentTexts,
-        getMessagingToolSentTargets,
-        didSendViaMessagingTool,
-        getLastToolError,
-      } = subscription;
+        // Call for side effects (sets compaction/pruning runtime state)
+        buildEmbeddedExtensionPaths({
+          cfg: params.config,
+          sessionManager,
+          provider: params.provider,
+          modelId: params.modelId,
+          model: params.model,
+        });
 
-      const queueHandle: EmbeddedPiQueueHandle = {
-        queueMessage: async (text: string) => {
-          await activeSession.steer(text);
-        },
-        isStreaming: () => activeSession.isStreaming,
-        isCompacting: () => subscription.isCompacting(),
-        abort: abortRun,
-      };
-      setActiveEmbeddedRun(params.sessionId, queueHandle);
+        const { builtInTools, customTools } = splitSdkTools({
+          tools,
+          sandboxEnabled: !!sandbox?.enabled,
+        });
 
-      let abortWarnTimer: NodeJS.Timeout | undefined;
-      const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
-      const abortTimer = setTimeout(
-        () => {
-          if (!isProbeSession) {
-            log.warn(
-              `embedded run timeout: runId=${params.runId} sessionId=${params.sessionId} timeoutMs=${params.timeoutMs}`,
-            );
-          }
-          abortRun(true);
-          if (!abortWarnTimer) {
-            abortWarnTimer = setTimeout(() => {
-              if (!activeSession.isStreaming) {
-                return;
-              }
-              if (!isProbeSession) {
-                log.warn(
-                  `embedded run abort still streaming: runId=${params.runId} sessionId=${params.sessionId}`,
-                );
-              }
-            }, 10_000);
-          }
-        },
-        Math.max(1, params.timeoutMs),
-      );
-
-      let messagesSnapshot: AgentMessage[] = [];
-      let sessionIdUsed = activeSession.sessionId;
-      const onAbort = () => {
-        const reason = params.abortSignal ? getAbortReason(params.abortSignal) : undefined;
-        const timeout = reason ? isTimeoutError(reason) : false;
-        abortRun(timeout, reason);
-      };
-      if (params.abortSignal) {
-        if (params.abortSignal.aborted) {
-          onAbort();
-        } else {
-          params.abortSignal.addEventListener("abort", onAbort, {
-            once: true,
-          });
-        }
-      }
-
-      // Get hook runner once for both before_agent_start and agent_end hooks
-      const hookRunner = getGlobalHookRunner();
-
-      let promptError: unknown = null;
-      try {
-        const promptStartedAt = Date.now();
-
-        // Run before_agent_start hooks to allow plugins to inject context
-        let effectivePrompt = params.prompt;
-        if (hookRunner?.hasHooks("before_agent_start")) {
-          try {
-            const hookResult = await hookRunner.runBeforeAgentStart(
-              {
-                prompt: params.prompt,
-                messages: activeSession.messages,
+        // Add client tools (OpenResponses hosted tools) to customTools
+        let clientToolCallDetected: { name: string; params: Record<string, unknown> } | null = null;
+        const clientToolDefs = params.clientTools
+          ? toClientToolDefinitions(
+              params.clientTools,
+              (toolName, toolParams) => {
+                clientToolCallDetected = { name: toolName, params: toolParams };
               },
               {
-                agentId: params.sessionKey?.split(":")[0] ?? "main",
+                agentId: sessionAgentId,
                 sessionKey: params.sessionKey,
-                workspaceDir: params.workspaceDir,
-                messageProvider: params.messageProvider ?? undefined,
-              },
-            );
-            if (hookResult?.prependContext) {
-              effectivePrompt = `${hookResult.prependContext}\n\n${params.prompt}`;
-              log.debug(
-                `hooks: prepended context to prompt (${hookResult.prependContext.length} chars)`,
-              );
-            }
-          } catch (hookErr) {
-            log.warn(`before_agent_start hook failed: ${String(hookErr)}`);
-          }
-        }
-
-        log.debug(`embedded run prompt start: runId=${params.runId} sessionId=${params.sessionId}`);
-        cacheTrace?.recordStage("prompt:before", {
-          prompt: effectivePrompt,
-          messages: activeSession.messages,
-        });
-
-        // Repair orphaned trailing user messages so new prompts don't violate role ordering.
-        const leafEntry = sessionManager.getLeafEntry();
-        if (leafEntry?.type === "message" && leafEntry.message.role === "user") {
-          if (leafEntry.parentId) {
-            sessionManager.branch(leafEntry.parentId);
-          } else {
-            sessionManager.resetLeaf();
-          }
-          const sessionContext = sessionManager.buildSessionContext();
-          activeSession.agent.replaceMessages(sessionContext.messages);
-          log.warn(
-            `Removed orphaned user message to prevent consecutive user turns. ` +
-              `runId=${params.runId} sessionId=${params.sessionId}`,
-          );
-        }
-
-        try {
-          // Detect and load images referenced in the prompt for vision-capable models.
-          // This eliminates the need for an explicit "view" tool call by injecting
-          // images directly into the prompt when the model supports it.
-          // Also scans conversation history to enable follow-up questions about earlier images.
-          const imageResult = await detectAndLoadPromptImages({
-            prompt: effectivePrompt,
-            workspaceDir: effectiveWorkspace,
-            model: params.model,
-            existingImages: params.images,
-            historyMessages: activeSession.messages,
-            maxBytes: MAX_IMAGE_BYTES,
-            // Enforce sandbox path restrictions when sandbox is enabled
-            sandboxRoot: sandbox?.enabled ? sandbox.workspaceDir : undefined,
-          });
-
-          // Inject history images into their original message positions.
-          // This ensures the model sees images in context (e.g., "compare to the first image").
-          const didMutate = injectHistoryImagesIntoMessages(
-            activeSession.messages,
-            imageResult.historyImagesByIndex,
-          );
-          if (didMutate) {
-            // Persist message mutations (e.g., injected history images) so we don't re-scan/reload.
-            activeSession.agent.replaceMessages(activeSession.messages);
-          }
-
-          cacheTrace?.recordStage("prompt:images", {
-            prompt: effectivePrompt,
-            messages: activeSession.messages,
-            note: `images: prompt=${imageResult.images.length} history=${imageResult.historyImagesByIndex.size}`,
-          });
-
-          const shouldTrackCacheTtl =
-            params.config?.agents?.defaults?.contextPruning?.mode === "cache-ttl" &&
-            isCacheTtlEligibleProvider(params.provider, params.modelId);
-          if (shouldTrackCacheTtl) {
-            appendCacheTtlTimestamp(sessionManager, {
-              timestamp: Date.now(),
-              provider: params.provider,
-              modelId: params.modelId,
-            });
-          }
-
-          // Only pass images option if there are actually images to pass
-          // This avoids potential issues with models that don't expect the images parameter
-          if (imageResult.images.length > 0) {
-            await abortable(activeSession.prompt(effectivePrompt, { images: imageResult.images }));
-          } else {
-            await abortable(activeSession.prompt(effectivePrompt));
-          }
-        } catch (err) {
-          promptError = err;
-        } finally {
-          log.debug(
-            `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
-          );
-        }
-
-        try {
-          await waitForCompactionRetry();
-        } catch (err) {
-          if (isAbortError(err)) {
-            if (!promptError) {
-              promptError = err;
-            }
-          } else {
-            throw err;
-          }
-        }
-
-        messagesSnapshot = activeSession.messages.slice();
-        sessionIdUsed = activeSession.sessionId;
-        cacheTrace?.recordStage("session:after", {
-          messages: messagesSnapshot,
-          note: promptError ? "prompt error" : undefined,
-        });
-        anthropicPayloadLogger?.recordUsage(messagesSnapshot, promptError);
-
-        // Run agent_end hooks to allow plugins to analyze the conversation
-        // This is fire-and-forget, so we don't await
-        if (hookRunner?.hasHooks("agent_end")) {
-          hookRunner
-            .runAgentEnd(
-              {
-                messages: messagesSnapshot,
-                success: !aborted && !promptError,
-                error: promptError ? describeUnknownError(promptError) : undefined,
-                durationMs: Date.now() - promptStartedAt,
-              },
-              {
-                agentId: params.sessionKey?.split(":")[0] ?? "main",
-                sessionKey: params.sessionKey,
-                workspaceDir: params.workspaceDir,
-                messageProvider: params.messageProvider ?? undefined,
               },
             )
-            .catch((err) => {
-              log.warn(`agent_end hook failed: ${err}`);
+          : [];
+
+        const allCustomTools = [...customTools, ...clientToolDefs];
+
+        try {
+          ({ session } = await createAgentSession({
+            cwd: resolvedWorkspace,
+            agentDir,
+            authStorage: params.authStorage,
+            modelRegistry: params.modelRegistry,
+            model: params.model,
+            thinkingLevel: mapThinkingLevel(params.thinkLevel),
+            tools: builtInTools,
+            customTools: allCustomTools,
+            sessionManager,
+            settingsManager,
+          }));
+          applySystemPromptOverrideToSession(session, systemPromptText);
+          if (!session) {
+            throw new Error("Embedded agent session missing");
+          }
+          const activeSession = session;
+          const cacheTrace = createCacheTrace({
+            cfg: params.config,
+            env: process.env,
+            runId: params.runId,
+            sessionId: activeSession.sessionId,
+            sessionKey: params.sessionKey,
+            provider: params.provider,
+            modelId: params.modelId,
+            modelApi: params.model.api,
+            workspaceDir: params.workspaceDir,
+          });
+          const anthropicPayloadLogger = createAnthropicPayloadLogger({
+            env: process.env,
+            runId: params.runId,
+            sessionId: activeSession.sessionId,
+            sessionKey: params.sessionKey,
+            provider: params.provider,
+            modelId: params.modelId,
+            modelApi: params.model.api,
+            workspaceDir: params.workspaceDir,
+          });
+
+          // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
+          activeSession.agent.streamFn = streamSimple;
+
+          applyExtraParamsToAgent(
+            activeSession.agent,
+            params.config,
+            params.provider,
+            params.modelId,
+            params.streamParams,
+          );
+
+          if (cacheTrace) {
+            cacheTrace.recordStage("session:loaded", {
+              messages: activeSession.messages,
+              system: systemPromptText,
+              note: "after session create",
             });
+            activeSession.agent.streamFn = cacheTrace.wrapStreamFn(activeSession.agent.streamFn);
+          }
+          if (anthropicPayloadLogger) {
+            activeSession.agent.streamFn = anthropicPayloadLogger.wrapStreamFn(
+              activeSession.agent.streamFn,
+            );
+          }
+
+          try {
+            const prior = await sanitizeSessionHistory({
+              messages: activeSession.messages,
+              modelApi: params.model.api,
+              modelId: params.modelId,
+              provider: params.provider,
+              sessionManager,
+              sessionId: params.sessionId,
+              policy: transcriptPolicy,
+            });
+            cacheTrace?.recordStage("session:sanitized", { messages: prior });
+            const validatedGemini = transcriptPolicy.validateGeminiTurns
+              ? validateGeminiTurns(prior)
+              : prior;
+            const validated = transcriptPolicy.validateAnthropicTurns
+              ? validateAnthropicTurns(validatedGemini)
+              : validatedGemini;
+            const limited = limitHistoryTurns(
+              validated,
+              getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
+            );
+            cacheTrace?.recordStage("session:limited", { messages: limited });
+            if (limited.length > 0) {
+              activeSession.agent.replaceMessages(limited);
+            }
+          } catch (err) {
+            sessionManager.flushPendingToolResults?.();
+            activeSession.dispose();
+            throw err;
+          }
+
+          let aborted = Boolean(params.abortSignal?.aborted);
+          let timedOut = false;
+          const getAbortReason = (signal: AbortSignal): unknown =>
+            "reason" in signal ? (signal as { reason?: unknown }).reason : undefined;
+          const makeTimeoutAbortReason = (): Error => {
+            const err = new Error("request timed out");
+            err.name = "TimeoutError";
+            return err;
+          };
+          const makeAbortError = (signal: AbortSignal): Error => {
+            const reason = getAbortReason(signal);
+            const err = reason ? new Error("aborted", { cause: reason }) : new Error("aborted");
+            err.name = "AbortError";
+            return err;
+          };
+          const abortRun = (isTimeout = false, reason?: unknown) => {
+            aborted = true;
+            if (isTimeout) {
+              timedOut = true;
+            }
+            if (isTimeout) {
+              runAbortController.abort(reason ?? makeTimeoutAbortReason());
+            } else {
+              runAbortController.abort(reason);
+            }
+            void activeSession.abort();
+          };
+          const abortable = <T>(promise: Promise<T>): Promise<T> => {
+            const signal = runAbortController.signal;
+            if (signal.aborted) {
+              return Promise.reject(makeAbortError(signal));
+            }
+            return new Promise<T>((resolve, reject) => {
+              const onAbort = () => {
+                signal.removeEventListener("abort", onAbort);
+                reject(makeAbortError(signal));
+              };
+              signal.addEventListener("abort", onAbort, { once: true });
+              promise.then(
+                (value) => {
+                  signal.removeEventListener("abort", onAbort);
+                  resolve(value);
+                },
+                (err) => {
+                  signal.removeEventListener("abort", onAbort);
+                  reject(err);
+                },
+              );
+            });
+          };
+
+          const subscription = subscribeEmbeddedPiSession({
+            session: activeSession,
+            runId: params.runId,
+            verboseLevel: params.verboseLevel,
+            reasoningMode: params.reasoningLevel ?? "off",
+            toolResultFormat: params.toolResultFormat,
+            shouldEmitToolResult: params.shouldEmitToolResult,
+            shouldEmitToolOutput: params.shouldEmitToolOutput,
+            onToolResult: params.onToolResult,
+            onReasoningStream: params.onReasoningStream,
+            onBlockReply: params.onBlockReply,
+            onBlockReplyFlush: params.onBlockReplyFlush,
+            blockReplyBreak: params.blockReplyBreak,
+            blockReplyChunking: params.blockReplyChunking,
+            onPartialReply: params.onPartialReply,
+            onAssistantMessageStart: params.onAssistantMessageStart,
+            onAgentEvent: params.onAgentEvent,
+            enforceFinalTag: params.enforceFinalTag,
+          });
+
+          const {
+            assistantTexts,
+            toolMetas,
+            unsubscribe,
+            waitForCompactionRetry,
+            getMessagingToolSentTexts,
+            getMessagingToolSentTargets,
+            didSendViaMessagingTool,
+            getLastToolError,
+          } = subscription;
+
+          const queueHandle: EmbeddedPiQueueHandle = {
+            queueMessage: async (text: string) => {
+              await activeSession.steer(text);
+            },
+            isStreaming: () => activeSession.isStreaming,
+            isCompacting: () => subscription.isCompacting(),
+            abort: abortRun,
+          };
+          setActiveEmbeddedRun(params.sessionId, queueHandle);
+
+          let abortWarnTimer: NodeJS.Timeout | undefined;
+          const isProbeSession = params.sessionId?.startsWith("probe-") ?? false;
+          const abortTimer = setTimeout(
+            () => {
+              if (!isProbeSession) {
+                log.warn(
+                  `embedded run timeout: runId=${params.runId} sessionId=${params.sessionId} timeoutMs=${params.timeoutMs}`,
+                );
+              }
+              abortRun(true);
+              if (!abortWarnTimer) {
+                abortWarnTimer = setTimeout(() => {
+                  if (!activeSession.isStreaming) {
+                    return;
+                  }
+                  if (!isProbeSession) {
+                    log.warn(
+                      `embedded run abort still streaming: runId=${params.runId} sessionId=${params.sessionId}`,
+                    );
+                  }
+                }, 10_000);
+              }
+            },
+            Math.max(1, params.timeoutMs),
+          );
+
+          let messagesSnapshot: AgentMessage[] = [];
+          let sessionIdUsed = activeSession.sessionId;
+          const onAbort = () => {
+            const reason = params.abortSignal ? getAbortReason(params.abortSignal) : undefined;
+            const timeout = reason ? isTimeoutError(reason) : false;
+            abortRun(timeout, reason);
+          };
+          if (params.abortSignal) {
+            if (params.abortSignal.aborted) {
+              onAbort();
+            } else {
+              params.abortSignal.addEventListener("abort", onAbort, {
+                once: true,
+              });
+            }
+          }
+
+          // Get hook runner once for both before_agent_start and agent_end hooks
+          const hookRunner = getGlobalHookRunner();
+
+          let promptError: unknown = null;
+          try {
+            const promptStartedAt = Date.now();
+
+            // Run before_agent_start hooks to allow plugins to inject context
+            let effectivePrompt = params.prompt;
+            if (hookRunner?.hasHooks("before_agent_start")) {
+              try {
+                const hookResult = await hookRunner.runBeforeAgentStart(
+                  {
+                    prompt: params.prompt,
+                    messages: activeSession.messages,
+                  },
+                  {
+                    agentId: params.sessionKey?.split(":")[0] ?? "main",
+                    sessionKey: params.sessionKey,
+                    workspaceDir: params.workspaceDir,
+                    messageProvider: params.messageProvider ?? undefined,
+                  },
+                );
+                if (hookResult?.prependContext) {
+                  effectivePrompt = `${hookResult.prependContext}\n\n${params.prompt}`;
+                  log.debug(
+                    `hooks: prepended context to prompt (${hookResult.prependContext.length} chars)`,
+                  );
+                }
+              } catch (hookErr) {
+                log.warn(`before_agent_start hook failed: ${String(hookErr)}`);
+              }
+            }
+
+            log.debug(
+              `embedded run prompt start: runId=${params.runId} sessionId=${params.sessionId}`,
+            );
+            cacheTrace?.recordStage("prompt:before", {
+              prompt: effectivePrompt,
+              messages: activeSession.messages,
+            });
+
+            // Repair orphaned trailing user messages so new prompts don't violate role ordering.
+            const leafEntry = sessionManager.getLeafEntry();
+            if (leafEntry?.type === "message" && leafEntry.message.role === "user") {
+              if (leafEntry.parentId) {
+                sessionManager.branch(leafEntry.parentId);
+              } else {
+                sessionManager.resetLeaf();
+              }
+              const sessionContext = sessionManager.buildSessionContext();
+              activeSession.agent.replaceMessages(sessionContext.messages);
+              log.warn(
+                `Removed orphaned user message to prevent consecutive user turns. ` +
+                  `runId=${params.runId} sessionId=${params.sessionId}`,
+              );
+            }
+
+            try {
+              // Detect and load images referenced in the prompt for vision-capable models.
+              // This eliminates the need for an explicit "view" tool call by injecting
+              // images directly into the prompt when the model supports it.
+              // Also scans conversation history to enable follow-up questions about earlier images.
+              const imageResult = await detectAndLoadPromptImages({
+                prompt: effectivePrompt,
+                workspaceDir: effectiveWorkspace,
+                model: params.model,
+                existingImages: params.images,
+                historyMessages: activeSession.messages,
+                maxBytes: MAX_IMAGE_BYTES,
+                // Enforce sandbox path restrictions when sandbox is enabled
+                sandboxRoot: sandbox?.enabled ? sandbox.workspaceDir : undefined,
+              });
+
+              // Inject history images into their original message positions.
+              // This ensures the model sees images in context (e.g., "compare to the first image").
+              const didMutate = injectHistoryImagesIntoMessages(
+                activeSession.messages,
+                imageResult.historyImagesByIndex,
+              );
+              if (didMutate) {
+                // Persist message mutations (e.g., injected history images) so we don't re-scan/reload.
+                activeSession.agent.replaceMessages(activeSession.messages);
+              }
+
+              cacheTrace?.recordStage("prompt:images", {
+                prompt: effectivePrompt,
+                messages: activeSession.messages,
+                note: `images: prompt=${imageResult.images.length} history=${imageResult.historyImagesByIndex.size}`,
+              });
+
+              const shouldTrackCacheTtl =
+                params.config?.agents?.defaults?.contextPruning?.mode === "cache-ttl" &&
+                isCacheTtlEligibleProvider(params.provider, params.modelId);
+              if (shouldTrackCacheTtl) {
+                appendCacheTtlTimestamp(sessionManager, {
+                  timestamp: Date.now(),
+                  provider: params.provider,
+                  modelId: params.modelId,
+                });
+              }
+
+              // Only pass images option if there are actually images to pass
+              // This avoids potential issues with models that don't expect the images parameter
+              if (imageResult.images.length > 0) {
+                await abortable(
+                  activeSession.prompt(effectivePrompt, { images: imageResult.images }),
+                );
+              } else {
+                await abortable(activeSession.prompt(effectivePrompt));
+              }
+            } catch (err) {
+              promptError = err;
+            } finally {
+              log.debug(
+                `embedded run prompt end: runId=${params.runId} sessionId=${params.sessionId} durationMs=${Date.now() - promptStartedAt}`,
+              );
+            }
+
+            try {
+              await waitForCompactionRetry();
+            } catch (err) {
+              if (isAbortError(err)) {
+                if (!promptError) {
+                  promptError = err;
+                }
+              } else {
+                throw err;
+              }
+            }
+
+            messagesSnapshot = activeSession.messages.slice();
+            sessionIdUsed = activeSession.sessionId;
+            cacheTrace?.recordStage("session:after", {
+              messages: messagesSnapshot,
+              note: promptError ? "prompt error" : undefined,
+            });
+            anthropicPayloadLogger?.recordUsage(messagesSnapshot, promptError);
+
+            // Run agent_end hooks to allow plugins to analyze the conversation
+            // This is fire-and-forget, so we don't await
+            if (hookRunner?.hasHooks("agent_end")) {
+              hookRunner
+                .runAgentEnd(
+                  {
+                    messages: messagesSnapshot,
+                    success: !aborted && !promptError,
+                    error: promptError ? describeUnknownError(promptError) : undefined,
+                    durationMs: Date.now() - promptStartedAt,
+                  },
+                  {
+                    agentId: params.sessionKey?.split(":")[0] ?? "main",
+                    sessionKey: params.sessionKey,
+                    workspaceDir: params.workspaceDir,
+                    messageProvider: params.messageProvider ?? undefined,
+                  },
+                )
+                .catch((err) => {
+                  log.warn(`agent_end hook failed: ${err}`);
+                });
+            }
+          } finally {
+            clearTimeout(abortTimer);
+            if (abortWarnTimer) {
+              clearTimeout(abortWarnTimer);
+            }
+            unsubscribe();
+            clearActiveEmbeddedRun(params.sessionId, queueHandle);
+            params.abortSignal?.removeEventListener?.("abort", onAbort);
+          }
+
+          const lastAssistant = messagesSnapshot
+            .slice()
+            .toReversed()
+            .find((m) => m.role === "assistant");
+
+          const toolMetasNormalized = toolMetas
+            .filter(
+              (entry): entry is { toolName: string; meta?: string } =>
+                typeof entry.toolName === "string" && entry.toolName.trim().length > 0,
+            )
+            .map((entry) => ({ toolName: entry.toolName, meta: entry.meta }));
+
+          return {
+            aborted,
+            timedOut,
+            promptError,
+            sessionIdUsed,
+            systemPromptReport,
+            messagesSnapshot,
+            assistantTexts,
+            toolMetas: toolMetasNormalized,
+            lastAssistant,
+            lastToolError: getLastToolError?.(),
+            didSendViaMessagingTool: didSendViaMessagingTool(),
+            messagingToolSentTexts: getMessagingToolSentTexts(),
+            messagingToolSentTargets: getMessagingToolSentTargets(),
+            cloudCodeAssistFormatError: Boolean(
+              lastAssistant?.errorMessage &&
+              isCloudCodeAssistFormatError(lastAssistant.errorMessage),
+            ),
+            // Client tool call detected (OpenResponses hosted tools)
+            clientToolCall: clientToolCallDetected ?? undefined,
+          };
+        } finally {
+          // Always tear down the session before we leave this attempt.
+          sessionManager?.flushPendingToolResults?.();
+          try {
+            await dbSessionRuntime?.appendPendingEntries();
+          } catch (err) {
+            log.warn(`failed to persist session transcript events: ${String(err)}`);
+          }
+          session?.dispose();
         }
-      } finally {
-        clearTimeout(abortTimer);
-        if (abortWarnTimer) {
-          clearTimeout(abortWarnTimer);
-        }
-        unsubscribe();
-        clearActiveEmbeddedRun(params.sessionId, queueHandle);
-        params.abortSignal?.removeEventListener?.("abort", onAbort);
-      }
-
-      const lastAssistant = messagesSnapshot
-        .slice()
-        .toReversed()
-        .find((m) => m.role === "assistant");
-
-      const toolMetasNormalized = toolMetas
-        .filter(
-          (entry): entry is { toolName: string; meta?: string } =>
-            typeof entry.toolName === "string" && entry.toolName.trim().length > 0,
-        )
-        .map((entry) => ({ toolName: entry.toolName, meta: entry.meta }));
-
-      return {
-        aborted,
-        timedOut,
-        promptError,
-        sessionIdUsed,
-        systemPromptReport,
-        messagesSnapshot,
-        assistantTexts,
-        toolMetas: toolMetasNormalized,
-        lastAssistant,
-        lastToolError: getLastToolError?.(),
-        didSendViaMessagingTool: didSendViaMessagingTool(),
-        messagingToolSentTexts: getMessagingToolSentTexts(),
-        messagingToolSentTargets: getMessagingToolSentTargets(),
-        cloudCodeAssistFormatError: Boolean(
-          lastAssistant?.errorMessage && isCloudCodeAssistFormatError(lastAssistant.errorMessage),
-        ),
-        // Client tool call detected (OpenResponses hosted tools)
-        clientToolCall: clientToolCallDetected ?? undefined,
-      };
-    } finally {
-      // Always tear down the session (and release the lock) before we leave this attempt.
-      sessionManager?.flushPendingToolResults?.();
-      session?.dispose();
-      await sessionLock.release();
-    }
+      },
+    );
   } finally {
     restoreSkillEnv?.();
     process.chdir(prevCwd);

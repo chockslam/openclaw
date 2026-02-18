@@ -45,4 +45,75 @@ describe("pi tool definition adapter", () => {
       error: "nope",
     });
   });
+
+  it("returns empty non-error result for optional missing memory files", async () => {
+    const missingPath = "/root/.openclaw/workspace/memory/2026-02-12.md";
+    const tool = {
+      name: "read",
+      label: "Read",
+      description: "reads files",
+      parameters: {},
+      execute: async () => {
+        throw new Error(`ENOENT: no such file or directory, access '${missingPath}'`);
+      },
+    } satisfies AgentTool<unknown, unknown>;
+
+    const defs = toToolDefinitions([tool]);
+    const result = await defs[0].execute("call3", { path: missingPath }, undefined, undefined);
+
+    expect(result.details).toMatchObject({
+      path: missingPath,
+      missing: true,
+    });
+    expect((result.details as { status?: unknown }).status).toBeUndefined();
+  });
+
+  it("returns empty non-error result for optional missing memory directory", async () => {
+    const missingPath = "/root/.openclaw/workspace/memory";
+    const tool = {
+      name: "read",
+      label: "Read",
+      description: "reads files",
+      parameters: {},
+      execute: async () => {
+        throw new Error(`ENOENT: no such file or directory, access '${missingPath}'`);
+      },
+    } satisfies AgentTool<unknown, unknown>;
+
+    const defs = toToolDefinitions([tool]);
+    const result = await defs[0].execute("call4", { path: missingPath }, undefined, undefined);
+
+    expect(result.details).toMatchObject({
+      path: missingPath,
+      missing: true,
+    });
+    expect((result.details as { status?: unknown }).status).toBeUndefined();
+  });
+
+  it("short-circuits guessed daily memory reads before tool execute", async () => {
+    const guessedPath = "/root/.openclaw/workspace/memory/2026-02-15.md";
+    let called = false;
+    const tool = {
+      name: "read",
+      label: "Read",
+      description: "reads files",
+      parameters: {},
+      execute: async () => {
+        called = true;
+        return {
+          content: [{ type: "text", text: "should not execute" }],
+          details: { ok: true },
+        };
+      },
+    } satisfies AgentTool<unknown, unknown>;
+
+    const defs = toToolDefinitions([tool]);
+    const result = await defs[0].execute("call5", { path: guessedPath }, undefined, undefined);
+
+    expect(called).toBe(false);
+    expect(result.details).toMatchObject({
+      path: guessedPath,
+      missing: true,
+    });
+  });
 });

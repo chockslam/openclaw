@@ -255,4 +255,31 @@ describe("memory search config", () => {
     const resolved = resolveMemorySearchConfig(cfg, "main");
     expect(resolved?.sources).toContain("sessions");
   });
+
+  it("supports postgres store driver config", () => {
+    const cfg = {
+      agents: {
+        defaults: {
+          memorySearch: {
+            provider: "openai",
+            store: {
+              driver: "postgres",
+              postgres: {
+                url: "postgres://localhost:5432/openclaw",
+                tenantId: "tenant-a",
+                maxConnections: 12,
+              },
+            },
+          },
+        },
+      },
+    };
+    const resolved = resolveMemorySearchConfig(cfg, "main");
+    expect(resolved?.store.driver).toBe("postgres");
+    expect(resolved?.store.postgres?.url).toBe("postgres://localhost:5432/openclaw");
+    expect(resolved?.store.postgres?.tenantId).toBe("tenant-a");
+    expect(resolved?.store.postgres?.maxConnections).toBe(12);
+    expect(resolved?.store.postgres?.chunksTable).toBe("memory_chunks");
+    expect(resolved?.store.postgres?.sessionMessagesTable).toBe("session_messages");
+  });
 });

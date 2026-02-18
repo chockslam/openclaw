@@ -41,20 +41,21 @@ export async function dispatchInboundMessageWithBufferedDispatcher(params: {
   const { dispatcher, replyOptions, markDispatchIdle } = createReplyDispatcherWithTyping(
     params.dispatcherOptions,
   );
-
-  const result = await dispatchInboundMessage({
-    ctx: params.ctx,
-    cfg: params.cfg,
-    dispatcher,
-    replyResolver: params.replyResolver,
-    replyOptions: {
-      ...params.replyOptions,
-      ...replyOptions,
-    },
-  });
-
-  markDispatchIdle();
-  return result;
+  try {
+    return await dispatchInboundMessage({
+      ctx: params.ctx,
+      cfg: params.cfg,
+      dispatcher,
+      replyResolver: params.replyResolver,
+      replyOptions: {
+        ...params.replyOptions,
+        ...replyOptions,
+      },
+    });
+  } finally {
+    // Always mark dispatcher idle so typing controllers can finalize on failures too.
+    markDispatchIdle();
+  }
 }
 
 export async function dispatchInboundMessageWithDispatcher(params: {

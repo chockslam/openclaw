@@ -40,7 +40,7 @@ export async function recordInboundSession(params: {
     storePath,
     sessionKey: update.sessionKey,
     deliveryContext: {
-      channel: update.channel,
+      channel: update.channel || "unknown",
       to: update.to,
       accountId: update.accountId,
       threadId: update.threadId,

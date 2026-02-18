@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
+import { saveSessionStore } from "../../config/sessions.js";
 import { isAbortTrigger, tryFastAbortFromMessage } from "./abort.js";
 import { enqueueFollowupRun, getFollowupQueueDepth, type FollowupRun } from "./queue.js";
 import { initSessionState } from "./session.js";
@@ -90,19 +91,12 @@ describe("abort detection", () => {
     const cfg = { session: { store: storePath } } as OpenClawConfig;
     const sessionKey = "telegram:123";
     const sessionId = "session-123";
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [sessionKey]: {
-            sessionId,
-            updatedAt: Date.now(),
-          },
-        },
-        null,
-        2,
-      ),
-    );
+    await saveSessionStore(storePath, {
+      [sessionKey]: {
+        sessionId,
+        updatedAt: Date.now(),
+      },
+    });
     const followupRun: FollowupRun = {
       prompt: "queued",
       enqueuedAt: Date.now(),
@@ -157,23 +151,16 @@ describe("abort detection", () => {
     const childKey = "agent:main:subagent:child-1";
     const sessionId = "session-parent";
     const childSessionId = "session-child";
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [sessionKey]: {
-            sessionId,
-            updatedAt: Date.now(),
-          },
-          [childKey]: {
-            sessionId: childSessionId,
-            updatedAt: Date.now(),
-          },
-        },
-        null,
-        2,
-      ),
-    );
+    await saveSessionStore(storePath, {
+      [sessionKey]: {
+        sessionId,
+        updatedAt: Date.now(),
+      },
+      [childKey]: {
+        sessionId: childSessionId,
+        updatedAt: Date.now(),
+      },
+    });
 
     subagentRegistryMocks.listSubagentRunsForRequester.mockReturnValueOnce([
       {

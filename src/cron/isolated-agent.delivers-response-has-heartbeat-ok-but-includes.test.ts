@@ -1,10 +1,14 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliDeps } from "../cli/deps.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { CronJob } from "./types.js";
+import { createMockStorageAdapter } from "../../test/helpers/mock-storage-adapter.js";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
+import {
+  getSessionStoreBridge,
+  initializeSessionStoreBridge,
+} from "../gateway/session-store-bridge.js";
 
 vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
@@ -20,29 +24,25 @@ import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { runCronIsolatedAgentTurn } from "./isolated-agent.js";
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempHomeBase(fn, { prefix: "openclaw-cron-" });
+  return withTempHomeBase(
+    async (home) => {
+      initializeSessionStoreBridge(createMockStorageAdapter());
+      return await fn(home);
+    },
+    { prefix: "openclaw-cron-" },
+  );
 }
 
 async function writeSessionStore(home: string) {
-  const dir = path.join(home, ".openclaw", "sessions");
-  await fs.mkdir(dir, { recursive: true });
-  const storePath = path.join(dir, "sessions.json");
-  await fs.writeFile(
-    storePath,
-    JSON.stringify(
-      {
-        "agent:main:main": {
-          sessionId: "main-session",
-          updatedAt: Date.now(),
-          lastProvider: "webchat",
-          lastTo: "",
-        },
-      },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
+  const storePath = path.join(home, ".openclaw", "sessions", "sessions.json");
+  await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
+    store["agent:main:main"] = {
+      sessionId: "main-session",
+      updatedAt: Date.now(),
+      lastProvider: "webchat",
+      lastTo: "",
+    };
+  });
   return storePath;
 }
 

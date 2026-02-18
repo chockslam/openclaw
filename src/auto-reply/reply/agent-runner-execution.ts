@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
 import type { TemplateContext } from "../templating.js";
 import type { VerboseLevel } from "../thinking.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
@@ -20,7 +19,6 @@ import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import {
   resolveAgentIdFromSessionKey,
   resolveGroupSessionKey,
-  resolveSessionTranscriptPath,
   type SessionEntry,
 } from "../../config/sessions.js";
 import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
@@ -543,17 +541,15 @@ export async function runAgentTurnWithFallback(params: {
         );
 
         try {
-          // Delete transcript file if it exists
           if (corruptedSessionId) {
-            const transcriptPath = resolveSessionTranscriptPath(corruptedSessionId);
-            try {
-              fs.unlinkSync(transcriptPath);
-            } catch {
-              // Ignore if file doesn't exist
-            }
+            await getSessionStoreBridge().deleteTranscript({
+              sessionId: corruptedSessionId,
+              storePath: params.storePath,
+              agentId: resolveAgentIdFromSessionKey(sessionKey),
+            });
           }
 
-          // Keep the in-memory snapshot consistent with the on-disk store reset.
+          // Keep the in-memory snapshot consistent with the store reset.
           delete params.activeSessionStore[sessionKey];
 
           // Remove session entry from store using a fresh, locked snapshot.

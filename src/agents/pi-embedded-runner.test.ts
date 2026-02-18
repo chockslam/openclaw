@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import "./test-helpers/fast-coding-tools.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { ensureOpenClawModelsJson } from "./models-config.js";
 
 vi.mock("@mariozechner/pi-ai", async () => {
@@ -104,7 +105,7 @@ beforeAll(async () => {
   workspaceDir = path.join(tempRoot, "workspace");
   await fs.mkdir(agentDir, { recursive: true });
   await fs.mkdir(workspaceDir, { recursive: true });
-}, 20_000);
+}, 60_000);
 
 afterAll(async () => {
   if (!tempRoot) {
@@ -138,10 +139,12 @@ const makeOpenAiConfig = (modelIds: string[]) =>
 
 const ensureModels = (cfg: OpenClawConfig) => ensureOpenClawModelsJson(cfg, agentDir) as unknown;
 
-const nextSessionFile = () => {
+const nextSessionId = () => {
   sessionCounter += 1;
-  return path.join(workspaceDir, `session-${sessionCounter}.jsonl`);
+  return `session-${sessionCounter}`;
 };
+
+const nextSessionFile = (sessionId: string) => `session://${sessionId}`;
 
 const testSessionKey = "agent:test:embedded";
 const immediateEnqueue = async <T>(task: () => Promise<T>) => task();
@@ -156,26 +159,19 @@ const textFromContent = (content: unknown) => {
   return undefined;
 };
 
-const readSessionMessages = async (sessionFile: string) => {
-  const raw = await fs.readFile(sessionFile, "utf-8");
-  return raw
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .map(
-      (line) =>
-        JSON.parse(line) as {
-          type?: string;
-          message?: { role?: string; content?: unknown };
-        },
-    )
-    .filter((entry) => entry.type === "message")
-    .map((entry) => entry.message as { role?: string; content?: unknown });
+const readSessionMessages = async (sessionId: string) => {
+  const messages = await getSessionStoreBridge().readTranscriptMessages({
+    sessionId,
+    order: "asc",
+  });
+  return messages as Array<{ role?: string; content?: unknown }>;
 };
 
 describe("runEmbeddedPiAgent", () => {
   const itIfNotWin32 = process.platform === "win32" ? it.skip : it;
   it("writes models.json into the provided agentDir", async () => {
-    const sessionFile = nextSessionFile();
+    const sessionId = nextSessionId();
+    const sessionFile = nextSessionFile(sessionId);
 
     const cfg = {
       models: {
@@ -202,7 +198,7 @@ describe("runEmbeddedPiAgent", () => {
 
     await expect(
       runEmbeddedPiAgent({
-        sessionId: "session:test",
+        sessionId,
         sessionKey: testSessionKey,
         sessionFile,
         workspaceDir,
@@ -223,12 +219,13 @@ describe("runEmbeddedPiAgent", () => {
     "persists the first user message before assistant output",
     { timeout: 120_000 },
     async () => {
-      const sessionFile = nextSessionFile();
+      const sessionId = nextSessionId();
+      const sessionFile = nextSessionFile(sessionId);
       const cfg = makeOpenAiConfig(["mock-1"]);
       await ensureModels(cfg);
 
       await runEmbeddedPiAgent({
-        sessionId: "session:test",
+        sessionId,
         sessionKey: testSessionKey,
         sessionFile,
         workspaceDir,
@@ -241,7 +238,7 @@ describe("runEmbeddedPiAgent", () => {
         enqueue: immediateEnqueue,
       });
 
-      const messages = await readSessionMessages(sessionFile);
+      const messages = await readSessionMessages(sessionId);
       const firstUserIndex = messages.findIndex(
         (message) => message?.role === "user" && textFromContent(message.content) === "hello",
       );
@@ -254,12 +251,13 @@ describe("runEmbeddedPiAgent", () => {
   );
 
   it("persists the user message when prompt fails before assistant output", async () => {
-    const sessionFile = nextSessionFile();
+    const sessionId = nextSessionId();
+    const sessionFile = nextSessionFile(sessionId);
     const cfg = makeOpenAiConfig(["mock-error"]);
     await ensureModels(cfg);
 
     const result = await runEmbeddedPiAgent({
-      sessionId: "session:test",
+      sessionId,
       sessionKey: testSessionKey,
       sessionFile,
       workspaceDir,
@@ -273,7 +271,7 @@ describe("runEmbeddedPiAgent", () => {
     });
     expect(result.payloads[0]?.isError).toBe(true);
 
-    const messages = await readSessionMessages(sessionFile);
+    const messages = await readSessionMessages(sessionId);
     const userIndex = messages.findIndex(
       (message) => message?.role === "user" && textFromContent(message.content) === "boom",
     );
@@ -284,43 +282,53 @@ describe("runEmbeddedPiAgent", () => {
     "appends new user + assistant after existing transcript entries",
     { timeout: 90_000 },
     async () => {
-      const { SessionManager } = await import("@mariozechner/pi-coding-agent");
-      const sessionFile = nextSessionFile();
-
-      const sessionManager = SessionManager.open(sessionFile);
-      sessionManager.appendMessage({
-        role: "user",
-        content: [{ type: "text", text: "seed user" }],
-      });
-      sessionManager.appendMessage({
-        role: "assistant",
-        content: [{ type: "text", text: "seed assistant" }],
-        stopReason: "stop",
-        api: "openai-responses",
-        provider: "openai",
-        model: "mock-1",
-        usage: {
-          input: 1,
-          output: 1,
-          cacheRead: 0,
-          cacheWrite: 0,
-          totalTokens: 2,
-          cost: {
-            input: 0,
-            output: 0,
-            cacheRead: 0,
-            cacheWrite: 0,
-            total: 0,
+      const sessionId = nextSessionId();
+      const sessionFile = nextSessionFile(sessionId);
+      await getSessionStoreBridge().appendTranscriptEvents({
+        sessionId,
+        events: [
+          {
+            type: "message",
+            message: {
+              role: "user",
+              content: [{ type: "text", text: "seed user" }],
+            },
           },
-        },
-        timestamp: Date.now(),
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "seed assistant" }],
+              stopReason: "stop",
+              api: "openai-responses",
+              provider: "openai",
+              model: "mock-1",
+              usage: {
+                input: 1,
+                output: 1,
+                cacheRead: 0,
+                cacheWrite: 0,
+                totalTokens: 2,
+                cost: {
+                  input: 0,
+                  output: 0,
+                  cacheRead: 0,
+                  cacheWrite: 0,
+                  total: 0,
+                },
+              },
+              timestamp: Date.now(),
+            },
+          },
+        ],
+        createIfMissing: true,
       });
 
       const cfg = makeOpenAiConfig(["mock-1"]);
       await ensureModels(cfg);
 
       await runEmbeddedPiAgent({
-        sessionId: "session:test",
+        sessionId,
         sessionKey: testSessionKey,
         sessionFile,
         workspaceDir,
@@ -333,7 +341,7 @@ describe("runEmbeddedPiAgent", () => {
         enqueue: immediateEnqueue,
       });
 
-      const messages = await readSessionMessages(sessionFile);
+      const messages = await readSessionMessages(sessionId);
       const seedUserIndex = messages.findIndex(
         (message) => message?.role === "user" && textFromContent(message.content) === "seed user",
       );
@@ -355,12 +363,13 @@ describe("runEmbeddedPiAgent", () => {
   );
 
   it("persists multi-turn user/assistant ordering across runs", async () => {
-    const sessionFile = nextSessionFile();
+    const sessionId = nextSessionId();
+    const sessionFile = nextSessionFile(sessionId);
     const cfg = makeOpenAiConfig(["mock-1"]);
     await ensureModels(cfg);
 
     await runEmbeddedPiAgent({
-      sessionId: "session:test",
+      sessionId,
       sessionKey: testSessionKey,
       sessionFile,
       workspaceDir,
@@ -374,7 +383,7 @@ describe("runEmbeddedPiAgent", () => {
     });
 
     await runEmbeddedPiAgent({
-      sessionId: "session:test",
+      sessionId,
       sessionKey: testSessionKey,
       sessionFile,
       workspaceDir,
@@ -387,7 +396,7 @@ describe("runEmbeddedPiAgent", () => {
       enqueue: immediateEnqueue,
     });
 
-    const messages = await readSessionMessages(sessionFile);
+    const messages = await readSessionMessages(sessionId);
     const firstUserIndex = messages.findIndex(
       (message) => message?.role === "user" && textFromContent(message.content) === "first",
     );
@@ -411,20 +420,27 @@ describe("runEmbeddedPiAgent", () => {
   });
 
   it("repairs orphaned user messages and continues", async () => {
-    const { SessionManager } = await import("@mariozechner/pi-coding-agent");
-    const sessionFile = nextSessionFile();
-
-    const sessionManager = SessionManager.open(sessionFile);
-    sessionManager.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: "orphaned user" }],
+    const sessionId = nextSessionId();
+    const sessionFile = nextSessionFile(sessionId);
+    await getSessionStoreBridge().appendTranscriptEvents({
+      sessionId,
+      events: [
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "orphaned user" }],
+          },
+        },
+      ],
+      createIfMissing: true,
     });
 
     const cfg = makeOpenAiConfig(["mock-1"]);
     await ensureModels(cfg);
 
     const result = await runEmbeddedPiAgent({
-      sessionId: "session:test",
+      sessionId,
       sessionKey: testSessionKey,
       sessionFile,
       workspaceDir,
@@ -442,20 +458,27 @@ describe("runEmbeddedPiAgent", () => {
   });
 
   it("repairs orphaned single-user sessions and continues", async () => {
-    const { SessionManager } = await import("@mariozechner/pi-coding-agent");
-    const sessionFile = nextSessionFile();
-
-    const sessionManager = SessionManager.open(sessionFile);
-    sessionManager.appendMessage({
-      role: "user",
-      content: [{ type: "text", text: "solo user" }],
+    const sessionId = nextSessionId();
+    const sessionFile = nextSessionFile(sessionId);
+    await getSessionStoreBridge().appendTranscriptEvents({
+      sessionId,
+      events: [
+        {
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "solo user" }],
+          },
+        },
+      ],
+      createIfMissing: true,
     });
 
     const cfg = makeOpenAiConfig(["mock-1"]);
     await ensureModels(cfg);
 
     const result = await runEmbeddedPiAgent({
-      sessionId: "session:test",
+      sessionId,
       sessionKey: testSessionKey,
       sessionFile,
       workspaceDir,

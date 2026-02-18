@@ -14,11 +14,7 @@ import {
   isEmbeddedPiRunStreaming,
   resolveEmbeddedSessionLane,
 } from "../../agents/pi-embedded.js";
-import {
-  resolveGroupSessionKey,
-  resolveSessionFilePath,
-  type SessionEntry,
-} from "../../config/sessions.js";
+import { resolveGroupSessionKey, type SessionEntry } from "../../config/sessions.js";
 import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { logVerbose } from "../../globals.js";
 import { clearCommandLane, getQueueSize } from "../../process/command-queue.js";
@@ -308,7 +304,7 @@ export async function runPreparedReply(
     }
   }
   const sessionIdFinal = sessionId ?? crypto.randomUUID();
-  const sessionFile = resolveSessionFilePath(sessionIdFinal, sessionEntry);
+  const sessionFile = `session://${sessionIdFinal}`;
   const queueBodyBase = [threadStarterNote, baseBodyFinal].filter(Boolean).join("\n\n");
   const queueMessageId = sessionCtx.MessageSid?.trim();
   const queueMessageIdHint = queueMessageId ? `[message_id: ${queueMessageId}]` : "";

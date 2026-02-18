@@ -4,6 +4,7 @@ import type {
   AgentToolUpdateCallback,
 } from "@mariozechner/pi-agent-core";
 import type { ToolDefinition } from "@mariozechner/pi-coding-agent";
+import path from "node:path";
 import type { ClientToolDefinition } from "./pi-embedded-runner/run/params.js";
 import { logDebug, logError } from "../logger.js";
 import { runBeforeToolCallHook } from "./pi-tools.before-tool-call.js";
@@ -57,6 +58,85 @@ function describeToolExecutionError(err: unknown): {
   return { message: String(err) };
 }
 
+function parseMissingPathFromEnoent(message: string): string | null {
+  if (!/ENOENT/i.test(message)) {
+    return null;
+  }
+  const quoted = message.match(/'(.*?)'/);
+  if (quoted?.[1]) {
+    return quoted[1];
+  }
+  const doubleQuoted = message.match(/"(.*?)"/);
+  if (doubleQuoted?.[1]) {
+    return doubleQuoted[1];
+  }
+  return null;
+}
+
+function isOptionalMemoryPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  const base = path.posix.basename(normalized);
+  if (base === "MEMORY.md" || base === "memory.md") {
+    return true;
+  }
+  if (/(^|\/)memory\/\d{4}-\d{2}-\d{2}\.md$/i.test(normalized)) {
+    return true;
+  }
+  return /(^|\/)memory$/i.test(normalized);
+}
+
+function isGuessedDailyMemoryPath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /(^|\/)memory\/\d{4}-\d{2}-\d{2}\.md$/i.test(normalized);
+}
+
+function buildPreflightMemoryReadResult(
+  normalizedToolName: string,
+  params: unknown,
+): AgentToolResult<unknown> | null {
+  if (normalizedToolName !== "read") {
+    return null;
+  }
+  const inputPath =
+    params && typeof params === "object" && typeof (params as { path?: unknown }).path === "string"
+      ? (params as { path: string }).path
+      : null;
+  if (!inputPath || !isGuessedDailyMemoryPath(inputPath)) {
+    return null;
+  }
+  return jsonResult({
+    path: inputPath,
+    text: "",
+    content: "",
+    missing: true,
+    note: "Guessed daily memory file paths are disabled; use memory_search and memory_get.",
+  });
+}
+
+function buildOptionalMemoryReadMissResult(
+  normalizedToolName: string,
+  params: unknown,
+  message: string,
+): AgentToolResult<unknown> | null {
+  if (normalizedToolName !== "read") {
+    return null;
+  }
+  const inputPath =
+    params && typeof params === "object" && typeof (params as { path?: unknown }).path === "string"
+      ? (params as { path: string }).path
+      : parseMissingPathFromEnoent(message);
+  if (!inputPath || !isOptionalMemoryPath(inputPath)) {
+    return null;
+  }
+  return jsonResult({
+    path: inputPath,
+    text: "",
+    content: "",
+    missing: true,
+    note: "Optional memory file is missing; continue with memory_search/session memory.",
+  });
+}
+
 function splitToolExecuteArgs(args: ToolExecuteArgsAny): {
   toolCallId: string;
   params: unknown;
@@ -92,6 +172,13 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
       parameters: tool.parameters,
       execute: async (...args: ToolExecuteArgs): Promise<AgentToolResult<unknown>> => {
         const { toolCallId, params, onUpdate, signal } = splitToolExecuteArgs(args);
+        const preflightMemoryRead = buildPreflightMemoryReadResult(normalizedName, params);
+        if (preflightMemoryRead) {
+          logDebug(
+            `[tools] ${normalizedName} skipped guessed daily memory file path; returning empty result`,
+          );
+          return preflightMemoryRead;
+        }
         try {
           return await tool.execute(toolCallId, params, signal, onUpdate);
         } catch (err) {
@@ -106,6 +193,17 @@ export function toToolDefinitions(tools: AnyAgentTool[]): ToolDefinition[] {
             throw err;
           }
           const described = describeToolExecutionError(err);
+          const optionalMemoryMiss = buildOptionalMemoryReadMissResult(
+            normalizedName,
+            params,
+            described.message,
+          );
+          if (optionalMemoryMiss) {
+            logDebug(
+              `[tools] ${normalizedName} optional memory file missing; returning empty result`,
+            );
+            return optionalMemoryMiss;
+          }
           if (described.stack && described.stack !== described.message) {
             logDebug(`tools: ${normalizedName} failed stack:\n${described.stack}`);
           }

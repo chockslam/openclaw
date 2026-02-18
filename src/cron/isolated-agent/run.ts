@@ -41,7 +41,6 @@ import {
   supportsXHighThinking,
 } from "../../auto-reply/thinking.js";
 import { createOutboundSendDeps, type CliDeps } from "../../cli/outbound-send-deps.js";
-import { resolveSessionTranscriptPath } from "../../config/sessions.js";
 import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
 import { deliverOutboundPayloads } from "../../infra/outbound/deliver.js";
@@ -322,7 +321,7 @@ export async function runCronIsolatedAgentTurn(params: {
   let fallbackProvider = provider;
   let fallbackModel = model;
   try {
-    const sessionFile = resolveSessionTranscriptPath(cronSession.sessionEntry.sessionId, agentId);
+    const sessionFile = `session://${cronSession.sessionEntry.sessionId}`;
     const resolvedVerboseLevel =
       normalizeVerboseLevel(cronSession.sessionEntry.verboseLevel) ??
       normalizeVerboseLevel(agentCfg?.verboseDefault) ??

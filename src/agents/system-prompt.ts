@@ -50,7 +50,8 @@ function buildMemorySection(params: {
   }
   const lines = [
     "## Memory Recall",
-    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search on MEMORY.md + memory/*.md; then use memory_get to pull only the needed lines. If low confidence after search, say you checked.",
+    "Before answering anything about prior work, decisions, dates, people, preferences, or todos: run memory_search first (memory files + optional session transcripts), then use memory_get only for paths returned by search.",
+    "Do not guess daily memory file paths (for example memory/YYYY-MM-DD.md) and do not use generic read for assumed memory files; missing files are normal in Postgres-first setups.",
   ];
   if (params.citationsMode === "off") {
     lines.push(

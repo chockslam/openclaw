@@ -1,12 +1,10 @@
 import type { Command } from "commander";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { loadConfig } from "../config/config.js";
-import { resolveStateDir } from "../config/paths.js";
-import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { setVerbose } from "../globals.js";
 import { getMemorySearchManager, type MemorySearchManagerResult } from "../memory/index.js";
 import { listMemoryFiles, normalizeExtraMemoryPaths } from "../memory/internal.js";
@@ -49,10 +47,8 @@ function formatSourceLabel(source: string, workspaceDir: string, agentId: string
     );
   }
   if (source === "sessions") {
-    const stateDir = resolveStateDir(process.env, os.homedir);
-    return shortenHomeInString(
-      `sessions (${path.join(stateDir, "agents", agentId, "sessions")}${path.sep}*.jsonl)`,
-    );
+    void agentId;
+    return "sessions (storage adapter / session://<id>)";
   }
   return source;
 }
@@ -99,22 +95,16 @@ async function checkReadableFile(pathname: string): Promise<{ exists: boolean; i
 
 async function scanSessionFiles(agentId: string): Promise<SourceScan> {
   const issues: string[] = [];
-  const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId);
   try {
-    const entries = await fs.readdir(sessionsDir, { withFileTypes: true });
-    const totalFiles = entries.filter(
-      (entry) => entry.isFile() && entry.name.endsWith(".jsonl"),
-    ).length;
+    const sessions = await getSessionStoreBridge().listSessions({ agentId });
+    const totalFiles = new Set(
+      sessions
+        .map(({ entry, key }) => entry.sessionId?.trim() || key.trim())
+        .filter((value) => Boolean(value)),
+    ).size;
     return { source: "sessions", totalFiles, issues };
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      issues.push(`sessions directory missing (${shortenHomePath(sessionsDir)})`);
-      return { source: "sessions", totalFiles: 0, issues };
-    }
-    issues.push(
-      `sessions directory not accessible (${shortenHomePath(sessionsDir)}): ${code ?? "error"}`,
-    );
+    issues.push(`session source not accessible from storage adapter: ${String(err)}`);
     return { source: "sessions", totalFiles: null, issues };
   }
 }
@@ -318,13 +308,21 @@ export async function runMemoryStatus(opts: MemoryCommandOptions) {
           status.sources?.length ? status.sources : ["memory"]
         ) as MemorySourceName[];
         const workspaceDir = status.workspaceDir;
+        const postgresStore = Boolean(
+          status.custom &&
+          typeof status.custom === "object" &&
+          "postgres" in status.custom &&
+          status.custom.postgres,
+        );
         const scan = workspaceDir
-          ? await scanMemorySources({
-              workspaceDir,
-              agentId,
-              sources,
-              extraPaths: status.extraPaths,
-            })
+          ? postgresStore
+            ? undefined
+            : await scanMemorySources({
+                workspaceDir,
+                agentId,
+                sources,
+                extraPaths: status.extraPaths,
+              })
           : undefined;
         allResults.push({ agentId, status, embeddingProbe, indexError, scan });
       },

@@ -46,6 +46,7 @@ async function main() {
   const [
     { loadConfig },
     { startGatewayServer },
+    { createRuntimeStorageAdapter, closeRuntimeStorageAdapter },
     { setGatewayWsLogStyle },
     { setVerbose },
     { acquireGatewayLock, GatewayLockError },
@@ -55,6 +56,7 @@ async function main() {
   ] = await Promise.all([
     import("../config/config.js"),
     import("../gateway/server.js"),
+    import("../gateway/adapters/runtime-storage.js"),
     import("../gateway/ws-logging.js"),
     import("../globals.js"),
     import("../infra/gateway-lock.js"),
@@ -110,6 +112,7 @@ async function main() {
   }
 
   let server: Awaited<ReturnType<typeof startGatewayServer>> | null = null;
+  let storageAdapter: Awaited<ReturnType<typeof createRuntimeStorageAdapter>> | null = null;
   let lock: GatewayLockHandle | null = null;
   let shuttingDown = false;
   let forceExitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -196,10 +199,14 @@ async function main() {
       }
       throw err;
     }
+    storageAdapter = await createRuntimeStorageAdapter();
     // eslint-disable-next-line no-constant-condition
     while (true) {
       try {
-        server = await startGatewayServer(port, { bind });
+        server = await startGatewayServer(port, {
+          bind,
+          storageAdapter,
+        });
       } catch (err) {
         cleanupSignals();
         defaultRuntime.error(`Gateway failed to start: ${String(err)}`);
@@ -211,6 +218,9 @@ async function main() {
     }
   } finally {
     await (lock as GatewayLockHandle | null)?.release();
+    if (storageAdapter) {
+      await closeRuntimeStorageAdapter(storageAdapter).catch(() => {});
+    }
     cleanupSignals();
   }
 }

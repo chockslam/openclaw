@@ -1,4 +1,3 @@
-import fs from "node:fs";
 import type { SkillCommandSpec } from "../agents/skills.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { MediaUnderstandingDecision } from "../media-understanding/types.js";
@@ -10,12 +9,7 @@ import { resolveModelAuthMode } from "../agents/model-auth.js";
 import { resolveConfiguredModelRef } from "../agents/model-selection.js";
 import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../agents/usage.js";
-import {
-  resolveMainSessionKey,
-  resolveSessionFilePath,
-  type SessionEntry,
-  type SessionScope,
-} from "../config/sessions.js";
+import { resolveMainSessionKey, type SessionEntry, type SessionScope } from "../config/sessions.js";
 import { resolveCommitHash } from "../infra/git-commit.js";
 import { listPluginCommands } from "../plugins/commands.js";
 import {
@@ -192,61 +186,35 @@ const readUsageFromSessionLog = (
       model?: string;
     }
   | undefined => {
-  // Transcripts are stored at the session file path (fallback: ~/.openclaw/sessions/<SessionId>.jsonl)
   if (!sessionId) {
     return undefined;
   }
-  const logPath = resolveSessionFilePath(sessionId, sessionEntry);
-  if (!fs.existsSync(logPath)) {
+  const input = sessionEntry?.inputTokens;
+  const output = sessionEntry?.outputTokens;
+  const total = sessionEntry?.totalTokens;
+  if (input == null && output == null && total == null) {
     return undefined;
   }
-
-  try {
-    const lines = fs.readFileSync(logPath, "utf-8").split(/\n+/);
-    let input = 0;
-    let output = 0;
-    let promptTokens = 0;
-    let model: string | undefined;
-    let lastUsage: ReturnType<typeof normalizeUsage> | undefined;
-
-    for (const line of lines) {
-      if (!line.trim()) {
-        continue;
-      }
-      try {
-        const parsed = JSON.parse(line) as {
-          message?: {
-            usage?: UsageLike;
-            model?: string;
-          };
-          usage?: UsageLike;
-          model?: string;
-        };
-        const usageRaw = parsed.message?.usage ?? parsed.usage;
-        const usage = normalizeUsage(usageRaw);
-        if (usage) {
-          lastUsage = usage;
-        }
-        model = parsed.message?.model ?? parsed.model ?? model;
-      } catch {
-        // ignore bad lines
-      }
-    }
-
-    if (!lastUsage) {
-      return undefined;
-    }
-    input = lastUsage.input ?? 0;
-    output = lastUsage.output ?? 0;
-    promptTokens = derivePromptTokens(lastUsage) ?? lastUsage.total ?? input + output;
-    const total = lastUsage.total ?? promptTokens + output;
-    if (promptTokens === 0 && total === 0) {
-      return undefined;
-    }
-    return { input, output, promptTokens, total, model };
-  } catch {
+  const normalized = normalizeUsage({
+    input,
+    output,
+    total,
+  } as UsageLike);
+  if (!normalized) {
     return undefined;
   }
+  const promptTokens =
+    derivePromptTokens(normalized) ??
+    normalized.total ??
+    (normalized.input ?? 0) + (normalized.output ?? 0);
+  const resolvedTotal = normalized.total ?? promptTokens + (normalized.output ?? 0);
+  return {
+    input: normalized.input ?? 0,
+    output: normalized.output ?? 0,
+    promptTokens,
+    total: resolvedTotal,
+    model: sessionEntry?.model,
+  };
 };
 
 const formatUsagePair = (input?: number | null, output?: number | null) => {

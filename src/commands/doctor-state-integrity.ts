@@ -4,13 +4,7 @@ import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import { resolveDefaultAgentId } from "../agents/agent-scope.js";
 import { resolveOAuthDir, resolveStateDir } from "../config/paths.js";
-import {
-  loadSessionStore,
-  resolveMainSessionKey,
-  resolveSessionFilePath,
-  resolveSessionTranscriptsDirForAgent,
-  resolveStorePath,
-} from "../config/sessions.js";
+import { loadSessionStore, resolveMainSessionKey, resolveStorePath } from "../config/sessions.js";
 import { note } from "../terminal/note.js";
 import { shortenHomePath } from "../utils.js";
 
@@ -77,27 +71,6 @@ function addUserRwx(mode: number): number {
   return perms | 0o700;
 }
 
-function countJsonlLines(filePath: string): number {
-  try {
-    const raw = fs.readFileSync(filePath, "utf-8");
-    if (!raw) {
-      return 0;
-    }
-    let count = 0;
-    for (let i = 0; i < raw.length; i += 1) {
-      if (raw[i] === "\n") {
-        count += 1;
-      }
-    }
-    if (!raw.endsWith("\n")) {
-      count += 1;
-    }
-    return count;
-  } catch {
-    return 0;
-  }
-}
-
 function findOtherStateDirs(stateDir: string): string[] {
   const resolvedState = path.resolve(stateDir);
   const roots =
@@ -144,13 +117,9 @@ export async function noteStateIntegrity(
   const defaultStateDir = path.join(homedir(), ".openclaw");
   const oauthDir = resolveOAuthDir(env, stateDir);
   const agentId = resolveDefaultAgentId(cfg);
-  const sessionsDir = resolveSessionTranscriptsDirForAgent(agentId, env, homedir);
   const storePath = resolveStorePath(cfg.session?.store, { agentId });
-  const storeDir = path.dirname(storePath);
   const displayStateDir = shortenHomePath(stateDir);
   const displayOauthDir = shortenHomePath(oauthDir);
-  const displaySessionsDir = shortenHomePath(sessionsDir);
-  const displayStoreDir = shortenHomePath(storeDir);
   const displayConfigPath = configPath ? shortenHomePath(configPath) : undefined;
 
   let stateDirExists = existsDir(stateDir);
@@ -245,16 +214,8 @@ export async function noteStateIntegrity(
 
   if (stateDirExists) {
     const dirCandidates = new Map<string, string>();
-    dirCandidates.set(sessionsDir, "Sessions dir");
-    dirCandidates.set(storeDir, "Session store dir");
     dirCandidates.set(oauthDir, "OAuth dir");
     const displayDirFor = (dir: string) => {
-      if (dir === sessionsDir) {
-        return displaySessionsDir;
-      }
-      if (dir === storeDir) {
-        return displayStoreDir;
-      }
       if (dir === oauthDir) {
         return displayOauthDir;
       }
@@ -333,38 +294,11 @@ export async function noteStateIntegrity(
         return bUpdated - aUpdated;
       })
       .slice(0, 5);
-    const missing = recent.filter(([, entry]) => {
-      const sessionId = entry.sessionId;
-      if (!sessionId) {
-        return false;
-      }
-      const transcriptPath = resolveSessionFilePath(sessionId, entry, {
-        agentId,
-      });
-      return !existsFile(transcriptPath);
-    });
-    if (missing.length > 0) {
-      warnings.push(
-        `- ${missing.length}/${recent.length} recent sessions are missing transcripts. Check for deleted session files or split state dirs.`,
-      );
-    }
 
     const mainKey = resolveMainSessionKey(cfg);
     const mainEntry = store[mainKey];
-    if (mainEntry?.sessionId) {
-      const transcriptPath = resolveSessionFilePath(mainEntry.sessionId, mainEntry, { agentId });
-      if (!existsFile(transcriptPath)) {
-        warnings.push(
-          `- Main session transcript missing (${shortenHomePath(transcriptPath)}). History will appear to reset.`,
-        );
-      } else {
-        const lineCount = countJsonlLines(transcriptPath);
-        if (lineCount <= 1) {
-          warnings.push(
-            `- Main session transcript has only ${lineCount} line. Session history may not be appending.`,
-          );
-        }
-      }
+    if (!mainEntry?.sessionId && recent.length > 0) {
+      warnings.push("- Main session is missing a sessionId in metadata.");
     }
   }
 

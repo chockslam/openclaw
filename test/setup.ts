@@ -10,9 +10,11 @@ import type {
 } from "../src/channels/plugins/types.js";
 import type { OpenClawConfig } from "../src/config/config.js";
 import type { OutboundSendDeps } from "../src/infra/outbound/deliver.js";
+import { initializeSessionStoreBridge } from "../src/gateway/session-store-bridge.js";
 import { installProcessWarningFilter } from "../src/infra/warnings.js";
 import { setActivePluginRegistry } from "../src/plugins/runtime.js";
 import { createTestRegistry } from "../src/test-utils/channel-plugins.js";
+import { createMockStorageAdapter } from "./helpers/mock-storage-adapter.js";
 import { withIsolatedTestHome } from "./test-env";
 
 installProcessWarningFilter();
@@ -156,6 +158,7 @@ const createDefaultRegistry = () =>
   ]);
 
 beforeEach(() => {
+  initializeSessionStoreBridge(createMockStorageAdapter());
   setActivePluginRegistry(createDefaultRegistry());
 });
 

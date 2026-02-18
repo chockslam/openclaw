@@ -70,19 +70,20 @@ describe("memory search citations", () => {
     expect(details.results[0]?.citation).toBeUndefined();
   });
 
-  it("clamps decorated snippets to qmd injected budget", async () => {
-    backend = "qmd";
+  it("ignores deprecated qmd snippet budget config", async () => {
+    backend = "builtin";
     const cfg = {
-      memory: { citations: "on", backend: "qmd", qmd: { limits: { maxInjectedChars: 20 } } },
+      memory: { citations: "on", qmd: { limits: { maxInjectedChars: 20 } } },
       agents: { list: [{ id: "main", default: true }] },
     };
     const tool = createMemorySearchTool({ config: cfg });
     if (!tool) {
       throw new Error("tool missing");
     }
-    const result = await tool.execute("call_citations_qmd", { query: "notes" });
+    const result = await tool.execute("call_citations_legacy_budget", { query: "notes" });
     const details = result.details as { results: Array<{ snippet: string; citation?: string }> };
-    expect(details.results[0]?.snippet.length).toBeLessThanOrEqual(20);
+    expect(details.results[0]?.snippet).toMatch(/Source:/);
+    expect(details.results[0]?.snippet.length).toBeGreaterThan(20);
   });
 
   it("honors auto mode for direct chats", async () => {

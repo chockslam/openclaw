@@ -32,8 +32,21 @@ export type ResolvedMemorySearchConfig = {
     modelCacheDir?: string;
   };
   store: {
-    driver: "sqlite";
+    driver: "sqlite" | "postgres";
     path: string;
+    postgres?: {
+      url?: string;
+      tenantId: string;
+      schema: string;
+      sessionsTable: string;
+      sessionMessagesTable: string;
+      filesTable: string;
+      chunksTable: string;
+      embeddingCacheTable: string;
+      indexStateTable: string;
+      maxConnections: number;
+      ssl?: boolean;
+    };
     vector: {
       enabled: boolean;
       extensionPath?: string;
@@ -85,6 +98,15 @@ const DEFAULT_HYBRID_TEXT_WEIGHT = 0.3;
 const DEFAULT_HYBRID_CANDIDATE_MULTIPLIER = 4;
 const DEFAULT_CACHE_ENABLED = true;
 const DEFAULT_SOURCES: Array<"memory" | "sessions"> = ["memory"];
+const DEFAULT_POSTGRES_TENANT_ID = "00000000-0000-0000-0000-000000000000";
+const DEFAULT_POSTGRES_SCHEMA = "public";
+const DEFAULT_POSTGRES_SESSIONS_TABLE = "sessions";
+const DEFAULT_POSTGRES_SESSION_MESSAGES_TABLE = "session_messages";
+const DEFAULT_POSTGRES_FILES_TABLE = "memory_files";
+const DEFAULT_POSTGRES_CHUNKS_TABLE = "memory_chunks";
+const DEFAULT_POSTGRES_EMBEDDING_CACHE_TABLE = "memory_embedding_cache";
+const DEFAULT_POSTGRES_INDEX_STATE_TABLE = "memory_index_state";
+const DEFAULT_POSTGRES_MAX_CONNECTIONS = 10;
 
 function normalizeSources(
   sources: Array<"memory" | "sessions"> | undefined,
@@ -179,9 +201,60 @@ function mergeConfig(
     extensionPath:
       overrides?.store?.vector?.extensionPath ?? defaults?.store?.vector?.extensionPath,
   };
+  const storeDriver = overrides?.store?.driver ?? defaults?.store?.driver ?? "sqlite";
+  const postgres = {
+    url:
+      overrides?.store?.postgres?.url ??
+      defaults?.store?.postgres?.url ??
+      process.env.OPENCLAW_MEMORY_POSTGRES_URL ??
+      process.env.POSTGRES_URL,
+    tenantId:
+      overrides?.store?.postgres?.tenantId ??
+      defaults?.store?.postgres?.tenantId ??
+      process.env.OPENCLAW_MEMORY_TENANT_ID ??
+      DEFAULT_POSTGRES_TENANT_ID,
+    schema:
+      overrides?.store?.postgres?.schema ??
+      defaults?.store?.postgres?.schema ??
+      DEFAULT_POSTGRES_SCHEMA,
+    sessionsTable:
+      overrides?.store?.postgres?.sessionsTable ??
+      defaults?.store?.postgres?.sessionsTable ??
+      DEFAULT_POSTGRES_SESSIONS_TABLE,
+    sessionMessagesTable:
+      overrides?.store?.postgres?.sessionMessagesTable ??
+      defaults?.store?.postgres?.sessionMessagesTable ??
+      DEFAULT_POSTGRES_SESSION_MESSAGES_TABLE,
+    filesTable:
+      overrides?.store?.postgres?.filesTable ??
+      defaults?.store?.postgres?.filesTable ??
+      DEFAULT_POSTGRES_FILES_TABLE,
+    chunksTable:
+      overrides?.store?.postgres?.chunksTable ??
+      defaults?.store?.postgres?.chunksTable ??
+      DEFAULT_POSTGRES_CHUNKS_TABLE,
+    embeddingCacheTable:
+      overrides?.store?.postgres?.embeddingCacheTable ??
+      defaults?.store?.postgres?.embeddingCacheTable ??
+      DEFAULT_POSTGRES_EMBEDDING_CACHE_TABLE,
+    indexStateTable:
+      overrides?.store?.postgres?.indexStateTable ??
+      defaults?.store?.postgres?.indexStateTable ??
+      DEFAULT_POSTGRES_INDEX_STATE_TABLE,
+    maxConnections: Math.max(
+      1,
+      Math.floor(
+        overrides?.store?.postgres?.maxConnections ??
+          defaults?.store?.postgres?.maxConnections ??
+          DEFAULT_POSTGRES_MAX_CONNECTIONS,
+      ),
+    ),
+    ssl: overrides?.store?.postgres?.ssl ?? defaults?.store?.postgres?.ssl,
+  };
   const store = {
-    driver: overrides?.store?.driver ?? defaults?.store?.driver ?? "sqlite",
+    driver: storeDriver,
     path: resolveStorePath(agentId, overrides?.store?.path ?? defaults?.store?.path),
+    postgres: storeDriver === "postgres" ? postgres : undefined,
     vector,
   };
   const chunking = {

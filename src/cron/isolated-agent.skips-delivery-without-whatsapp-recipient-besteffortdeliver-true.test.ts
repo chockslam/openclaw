@@ -1,4 +1,3 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliDeps } from "../cli/deps.js";
@@ -10,7 +9,12 @@ import { telegramPlugin } from "../../extensions/telegram/src/channel.js";
 import { setTelegramRuntime } from "../../extensions/telegram/src/runtime.js";
 import { whatsappPlugin } from "../../extensions/whatsapp/src/channel.js";
 import { setWhatsAppRuntime } from "../../extensions/whatsapp/src/runtime.js";
+import { createMockStorageAdapter } from "../../test/helpers/mock-storage-adapter.js";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
+import {
+  getSessionStoreBridge,
+  initializeSessionStoreBridge,
+} from "../gateway/session-store-bridge.js";
 import { setActivePluginRegistry } from "../plugins/runtime.js";
 import { createPluginRuntime } from "../plugins/runtime/index.js";
 import { createTestRegistry } from "../test-utils/channel-plugins.js";
@@ -29,29 +33,25 @@ import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { runCronIsolatedAgentTurn } from "./isolated-agent.js";
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempHomeBase(fn, { prefix: "openclaw-cron-" });
+  return withTempHomeBase(
+    async (home) => {
+      initializeSessionStoreBridge(createMockStorageAdapter());
+      return await fn(home);
+    },
+    { prefix: "openclaw-cron-" },
+  );
 }
 
 async function writeSessionStore(home: string) {
-  const dir = path.join(home, ".openclaw", "sessions");
-  await fs.mkdir(dir, { recursive: true });
-  const storePath = path.join(dir, "sessions.json");
-  await fs.writeFile(
-    storePath,
-    JSON.stringify(
-      {
-        "agent:main:main": {
-          sessionId: "main-session",
-          updatedAt: Date.now(),
-          lastProvider: "webchat",
-          lastTo: "",
-        },
-      },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
+  const storePath = path.join(home, ".openclaw", "sessions", "sessions.json");
+  await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
+    store["agent:main:main"] = {
+      sessionId: "main-session",
+      updatedAt: Date.now(),
+      lastProvider: "webchat",
+      lastTo: "",
+    };
+  });
   return storePath;
 }
 

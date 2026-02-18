@@ -1,65 +1,94 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const mockPrimary = {
+const mockSqliteManager = {
   search: vi.fn(async () => []),
   readFile: vi.fn(async () => ({ text: "", path: "MEMORY.md" })),
-  status: vi.fn(() => ({
-    backend: "qmd" as const,
-    provider: "qmd",
-    model: "qmd",
-    requestedProvider: "qmd",
-    files: 0,
-    chunks: 0,
-    dirty: false,
-    workspaceDir: "/tmp",
-    dbPath: "/tmp/index.sqlite",
-    sources: ["memory" as const],
-    sourceCounts: [{ source: "memory" as const, files: 0, chunks: 0 }],
-  })),
-  sync: vi.fn(async () => {}),
+  status: vi.fn(() => ({ backend: "builtin" as const, provider: "openai" })),
   probeEmbeddingAvailability: vi.fn(async () => ({ ok: true })),
   probeVectorAvailability: vi.fn(async () => true),
-  close: vi.fn(async () => {}),
 };
 
-vi.mock("./qmd-manager.js", () => ({
-  QmdMemoryManager: {
-    create: vi.fn(async () => mockPrimary),
-  },
-}));
+const mockPostgresManager = {
+  search: vi.fn(async () => []),
+  readFile: vi.fn(async () => ({ text: "", path: "MEMORY.md" })),
+  status: vi.fn(() => ({ backend: "builtin" as const, provider: "openai" })),
+  probeEmbeddingAvailability: vi.fn(async () => ({ ok: true })),
+  probeVectorAvailability: vi.fn(async () => true),
+};
 
 vi.mock("./manager.js", () => ({
   MemoryIndexManager: {
-    get: vi.fn(async () => null),
+    get: vi.fn(async () => mockSqliteManager),
   },
 }));
 
-import { QmdMemoryManager } from "./qmd-manager.js";
+vi.mock("./manager-postgres.js", () => ({
+  PostgresMemoryIndexManager: {
+    get: vi.fn(async () => mockPostgresManager),
+  },
+}));
+
+import { PostgresMemoryIndexManager } from "./manager-postgres.js";
+import { MemoryIndexManager } from "./manager.js";
 import { getMemorySearchManager } from "./search-manager.js";
 
 beforeEach(() => {
-  mockPrimary.search.mockClear();
-  mockPrimary.readFile.mockClear();
-  mockPrimary.status.mockClear();
-  mockPrimary.sync.mockClear();
-  mockPrimary.probeEmbeddingAvailability.mockClear();
-  mockPrimary.probeVectorAvailability.mockClear();
-  mockPrimary.close.mockClear();
-  QmdMemoryManager.create.mockClear();
+  mockSqliteManager.search.mockClear();
+  mockSqliteManager.readFile.mockClear();
+  mockSqliteManager.status.mockClear();
+  mockSqliteManager.probeEmbeddingAvailability.mockClear();
+  mockSqliteManager.probeVectorAvailability.mockClear();
+  mockPostgresManager.search.mockClear();
+  mockPostgresManager.readFile.mockClear();
+  mockPostgresManager.status.mockClear();
+  mockPostgresManager.probeEmbeddingAvailability.mockClear();
+  mockPostgresManager.probeVectorAvailability.mockClear();
+  MemoryIndexManager.get.mockClear();
+  PostgresMemoryIndexManager.get.mockClear();
 });
 
-describe("getMemorySearchManager caching", () => {
-  it("reuses the same QMD manager instance for repeated calls", async () => {
+describe("getMemorySearchManager routing", () => {
+  it("uses sqlite manager by default", async () => {
     const cfg = {
-      memory: { backend: "qmd", qmd: {} },
+      memory: { backend: "builtin" },
       agents: { list: [{ id: "main", default: true, workspace: "/tmp/workspace" }] },
     } as const;
 
-    const first = await getMemorySearchManager({ cfg, agentId: "main" });
-    const second = await getMemorySearchManager({ cfg, agentId: "main" });
+    const resolved = await getMemorySearchManager({ cfg, agentId: "main" });
 
-    expect(first.manager).toBe(second.manager);
+    expect(resolved.manager).toBe(mockSqliteManager);
     // eslint-disable-next-line @typescript-eslint/unbound-method
-    expect(QmdMemoryManager.create).toHaveBeenCalledTimes(1);
+    expect(MemoryIndexManager.get).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(PostgresMemoryIndexManager.get).not.toHaveBeenCalled();
+  });
+
+  it("routes to postgres manager when store driver is postgres", async () => {
+    const cfg = {
+      memory: {
+        backend: "builtin",
+      },
+      agents: {
+        defaults: {
+          workspace: "/tmp/workspace",
+          memorySearch: {
+            enabled: true,
+            provider: "openai",
+            store: {
+              driver: "postgres",
+              postgres: { url: "postgres://localhost:5432/openclaw" },
+            },
+          },
+        },
+      },
+    } as const;
+
+    const resolved = await getMemorySearchManager({ cfg, agentId: "main" });
+
+    expect(resolved.manager).toBe(mockPostgresManager);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(PostgresMemoryIndexManager.get).toHaveBeenCalledTimes(1);
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    expect(MemoryIndexManager.get).not.toHaveBeenCalled();
   });
 });

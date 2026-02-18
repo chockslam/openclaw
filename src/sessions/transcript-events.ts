@@ -1,5 +1,8 @@
 type SessionTranscriptUpdate = {
-  sessionFile: string;
+  sessionId: string;
+  agentId?: string;
+  seq?: number;
+  updatedAt?: number;
 };
 
 type SessionTranscriptListener = (update: SessionTranscriptUpdate) => void;
@@ -13,13 +16,34 @@ export function onSessionTranscriptUpdate(listener: SessionTranscriptListener): 
   };
 }
 
-export function emitSessionTranscriptUpdate(sessionFile: string): void {
-  const trimmed = sessionFile.trim();
+export function emitSessionTranscriptUpdate(update: SessionTranscriptUpdate): void {
+  const sessionId = update.sessionId.trim();
+  if (!sessionId) {
+    return;
+  }
+  const normalized: SessionTranscriptUpdate = {
+    sessionId,
+    agentId: update.agentId?.trim() || undefined,
+    seq: typeof update.seq === "number" ? update.seq : undefined,
+    updatedAt: typeof update.updatedAt === "number" ? update.updatedAt : Date.now(),
+  };
+  for (const listener of SESSION_TRANSCRIPT_LISTENERS) {
+    listener(normalized);
+  }
+}
+
+export type { SessionTranscriptUpdate };
+
+export function emitLegacySessionTranscriptUpdate(sessionIdOrUri: string): void {
+  const trimmed = sessionIdOrUri.trim();
   if (!trimmed) {
     return;
   }
-  const update = { sessionFile: trimmed };
-  for (const listener of SESSION_TRANSCRIPT_LISTENERS) {
-    listener(update);
+  const sessionId = trimmed.startsWith("session://")
+    ? trimmed.slice("session://".length).trim()
+    : trimmed;
+  if (!sessionId) {
+    return;
   }
+  emitSessionTranscriptUpdate({ sessionId, updatedAt: Date.now() });
 }

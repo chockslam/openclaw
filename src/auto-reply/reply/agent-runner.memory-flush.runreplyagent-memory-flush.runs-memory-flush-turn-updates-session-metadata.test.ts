@@ -4,6 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { TemplateContext } from "../templating.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
+import { loadSessionStore, saveSessionStore } from "../../config/sessions.js";
 import { DEFAULT_MEMORY_FLUSH_PROMPT } from "./memory-flush.js";
 import { createMockTypingController } from "./test-helpers.js";
 
@@ -57,12 +58,9 @@ async function seedSessionStore(params: {
   sessionKey: string;
   entry: Record<string, unknown>;
 }) {
-  await fs.mkdir(path.dirname(params.storePath), { recursive: true });
-  await fs.writeFile(
-    params.storePath,
-    JSON.stringify({ [params.sessionKey]: params.entry }, null, 2),
-    "utf-8",
-  );
+  await saveSessionStore(params.storePath, {
+    [params.sessionKey]: params.entry,
+  });
 }
 
 function createBaseRun(params: {
@@ -180,7 +178,7 @@ describe("runReplyAgent memory flush", () => {
 
     expect(calls.map((call) => call.prompt)).toEqual([DEFAULT_MEMORY_FLUSH_PROMPT, "hello"]);
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    const stored = loadSessionStore(storePath);
     expect(stored[sessionKey].memoryFlushAt).toBeTypeOf("number");
     expect(stored[sessionKey].memoryFlushCompactionCount).toBe(1);
   });
@@ -242,7 +240,7 @@ describe("runReplyAgent memory flush", () => {
     const call = runEmbeddedPiAgentMock.mock.calls[0]?.[0] as { prompt?: string } | undefined;
     expect(call?.prompt).toBe("hello");
 
-    const stored = JSON.parse(await fs.readFile(storePath, "utf-8"));
+    const stored = loadSessionStore(storePath);
     expect(stored[sessionKey].memoryFlushAt).toBeUndefined();
   });
 });

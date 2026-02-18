@@ -1,14 +1,8 @@
-import fs from "node:fs";
-import path from "node:path";
-import readline from "node:readline";
 import type { NormalizedUsage, UsageLike } from "../agents/usage.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { SessionEntry } from "../config/sessions/types.js";
 import { normalizeUsage } from "../agents/usage.js";
-import {
-  resolveSessionFilePath,
-  resolveSessionTranscriptsDirForAgent,
-} from "../config/sessions/paths.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { estimateUsageCost, resolveModelCostConfig } from "../utils/usage-format.js";
 
 type ParsedUsageEntry = {
@@ -153,15 +147,12 @@ const applyCostTotal = (totals: CostUsageTotals, costTotal: number | undefined) 
   totals.totalCost += costTotal;
 };
 
-async function scanUsageFile(params: {
-  filePath: string;
+function scanUsageContent(params: {
+  content: string;
   config?: OpenClawConfig;
   onEntry: (entry: ParsedUsageEntry) => void;
-}): Promise<void> {
-  const fileStream = fs.createReadStream(params.filePath, { encoding: "utf-8" });
-  const rl = readline.createInterface({ input: fileStream, crlfDelay: Infinity });
-
-  for await (const line of rl) {
+}): void {
+  for (const line of params.content.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed) {
       continue;
@@ -203,29 +194,19 @@ export async function loadCostUsageSummary(params?: {
   const dailyMap = new Map<string, CostUsageTotals>();
   const totals = emptyTotals();
 
-  const sessionsDir = resolveSessionTranscriptsDirForAgent(params?.agentId);
-  const entries = await fs.promises.readdir(sessionsDir, { withFileTypes: true }).catch(() => []);
-  const files = (
-    await Promise.all(
-      entries
-        .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
-        .map(async (entry) => {
-          const filePath = path.join(sessionsDir, entry.name);
-          const stats = await fs.promises.stat(filePath).catch(() => null);
-          if (!stats) {
-            return null;
-          }
-          if (stats.mtimeMs < sinceTime) {
-            return null;
-          }
-          return filePath;
-        }),
-    )
-  ).filter((filePath): filePath is string => Boolean(filePath));
-
-  for (const filePath of files) {
-    await scanUsageFile({
-      filePath,
+  const bridge = getSessionStoreBridge();
+  const sessionIds = await bridge.listAllSessionIds();
+  for (const sessionId of sessionIds) {
+    const meta = await bridge.getSessionMetadata(sessionId);
+    if (meta && meta.mtimeMs < sinceTime) {
+      continue;
+    }
+    const content = await bridge.getSessionContent(sessionId);
+    if (!content) {
+      continue;
+    }
+    scanUsageContent({
+      content,
       config: params?.config,
       onEntry: (entry) => {
         const ts = entry.timestamp?.getTime();
@@ -262,18 +243,37 @@ export async function loadSessionCostSummary(params: {
   sessionFile?: string;
   config?: OpenClawConfig;
 }): Promise<SessionCostSummary | null> {
-  const sessionFile =
-    params.sessionFile ??
-    (params.sessionId ? resolveSessionFilePath(params.sessionId, params.sessionEntry) : undefined);
-  if (!sessionFile || !fs.existsSync(sessionFile)) {
+  const normalizeSessionFileId = (value?: string): string | undefined => {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (trimmed.startsWith("session://")) {
+      const parsed = trimmed.slice("session://".length).trim();
+      return parsed || undefined;
+    }
+    return trimmed || undefined;
+  };
+  const sessionId =
+    params.sessionId?.trim() ||
+    params.sessionEntry?.sessionId?.trim() ||
+    normalizeSessionFileId(params.sessionFile);
+  if (!sessionId) {
     return null;
   }
+
+  const bridge = getSessionStoreBridge();
+  const content = await bridge.getSessionContent(sessionId);
+  if (!content) {
+    return null;
+  }
+  const meta = await bridge.getSessionMetadata(sessionId);
 
   const totals = emptyTotals();
   let lastActivity: number | undefined;
 
-  await scanUsageFile({
-    filePath: sessionFile,
+  scanUsageContent({
+    content,
     config: params.config,
     onEntry: (entry) => {
       applyUsageTotals(totals, entry.usage);
@@ -286,9 +286,8 @@ export async function loadSessionCostSummary(params: {
   });
 
   return {
-    sessionId: params.sessionId,
-    sessionFile,
-    lastActivity,
+    sessionId,
+    lastActivity: lastActivity ?? meta?.mtimeMs,
     ...totals,
   };
 }

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
 import type { GatewayRequestHandlers } from "./types.js";
 import { abortEmbeddedPiRun, waitForEmbeddedPiRunEnd } from "../../agents/pi-embedded.js";
 import { stopSubagentsForRequester } from "../../auto-reply/reply/abort.js";
@@ -24,13 +23,9 @@ import {
 } from "../protocol/index.js";
 import { getSessionStoreBridge } from "../session-store-bridge.js";
 import {
-  archiveFileOnDisk,
-  listSessionsFromStore,
-  loadCombinedSessionStoreForGateway,
-  loadSessionEntry,
-  readSessionPreviewItemsFromTranscript,
+  listSessionsEfficiently,
+  loadSessionEntryAsync,
   resolveGatewaySessionStoreTarget,
-  resolveSessionTranscriptCandidates,
   type SessionsPatchResult,
   type SessionsPreviewEntry,
   type SessionsPreviewResult,
@@ -39,7 +34,7 @@ import { applySessionsPatchToStore } from "../sessions-patch.js";
 import { resolveSessionKeyFromResolveParams } from "../sessions-resolve.js";
 
 export const sessionsHandlers: GatewayRequestHandlers = {
-  "sessions.list": ({ params, respond }) => {
+  "sessions.list": async ({ params, respond }) => {
     if (!validateSessionsListParams(params)) {
       respond(
         false,
@@ -53,16 +48,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     }
     const p = params;
     const cfg = loadConfig();
-    const { storePath, store } = loadCombinedSessionStoreForGateway(cfg);
-    const result = listSessionsFromStore({
+    const result = await listSessionsEfficiently({
       cfg,
-      storePath,
-      store,
       opts: p,
     });
+
     respond(true, result, undefined);
   },
-  "sessions.preview": ({ params, respond }) => {
+  "sessions.preview": async ({ params, respond }) => {
     if (!validateSessionsPreviewParams(params)) {
       respond(
         false,
@@ -103,7 +96,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         const target = resolveGatewaySessionStoreTarget({ cfg, key });
         const store =
           storeCache.get(target.storePath) ??
-          getSessionStoreBridge().loadSessionStore(target.storePath);
+          (await getSessionStoreBridge().loadSessionStoreAsync(target.storePath));
         storeCache.set(target.storePath, store);
         const entry =
           target.storeKeys.map((candidate) => store[candidate]).find(Boolean) ??
@@ -112,14 +105,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
           previews.push({ key, status: "missing", items: [] });
           continue;
         }
-        const items = readSessionPreviewItemsFromTranscript(
-          entry.sessionId,
-          target.storePath,
-          entry.sessionFile,
-          target.agentId,
-          limit,
+        const items = await getSessionStoreBridge().readTranscriptPreview({
+          sessionId: entry.sessionId,
+          storePath: target.storePath,
+          sessionFile: entry.sessionFile,
+          agentId: target.agentId,
+          maxItems: limit,
           maxChars,
-        );
+        });
         previews.push({
           key,
           status: items.length > 0 ? "ok" : "empty",
@@ -295,7 +288,7 @@ export const sessionsHandlers: GatewayRequestHandlers = {
     const deleteTranscript = typeof p.deleteTranscript === "boolean" ? p.deleteTranscript : true;
 
     const storePath = target.storePath;
-    const { entry } = loadSessionEntry(key);
+    const { entry } = await loadSessionEntryAsync(key);
     const sessionId = entry?.sessionId;
     const existed = Boolean(entry);
     const queueKeys = new Set<string>(target.storeKeys);
@@ -334,21 +327,13 @@ export const sessionsHandlers: GatewayRequestHandlers = {
 
     const archived: string[] = [];
     if (deleteTranscript && sessionId) {
-      for (const candidate of resolveSessionTranscriptCandidates(
+      const deleted = await getSessionStoreBridge().deleteTranscript({
         sessionId,
         storePath,
-        entry?.sessionFile,
-        target.agentId,
-      )) {
-        if (!fs.existsSync(candidate)) {
-          continue;
-        }
-        try {
-          archived.push(archiveFileOnDisk(candidate, "deleted"));
-        } catch {
-          // Best-effort.
-        }
-      }
+        sessionFile: entry?.sessionFile,
+        agentId: target.agentId,
+      });
+      archived.push(...deleted.archived);
     }
 
     respond(true, { ok: true, key: target.canonicalKey, deleted: existed, archived }, undefined);
@@ -406,13 +391,14 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const filePath = resolveSessionTranscriptCandidates(
+    const compacted = await getSessionStoreBridge().compactTranscript({
       sessionId,
       storePath,
-      entry?.sessionFile,
-      target.agentId,
-    ).find((candidate) => fs.existsSync(candidate));
-    if (!filePath) {
+      sessionFile: entry?.sessionFile,
+      agentId: target.agentId,
+      maxMessages: maxLines,
+    });
+    if (!compacted.compacted && compacted.reason === "no-transcript") {
       respond(
         true,
         {
@@ -426,25 +412,19 @@ export const sessionsHandlers: GatewayRequestHandlers = {
       return;
     }
 
-    const raw = fs.readFileSync(filePath, "utf-8");
-    const lines = raw.split(/\r?\n/).filter((l) => l.trim().length > 0);
-    if (lines.length <= maxLines) {
+    if (!compacted.compacted) {
       respond(
         true,
         {
           ok: true,
           key: target.canonicalKey,
           compacted: false,
-          kept: lines.length,
+          kept: compacted.kept,
         },
         undefined,
       );
       return;
     }
-
-    const archived = archiveFileOnDisk(filePath, "bak");
-    const keptLines = lines.slice(-maxLines);
-    fs.writeFileSync(filePath, `${keptLines.join("\n")}\n`, "utf-8");
 
     await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
       const entryKey = compactTarget.primaryKey;
@@ -464,8 +444,8 @@ export const sessionsHandlers: GatewayRequestHandlers = {
         ok: true,
         key: target.canonicalKey,
         compacted: true,
-        archived,
-        kept: keptLines.length,
+        archived: compacted.archived,
+        kept: compacted.kept,
       },
       undefined,
     );

@@ -65,6 +65,29 @@ OpenClaw resolves these via `src/config/sessions.ts`.
 
 ---
 
+## Decommissioning Legacy Persistence (Adapter-Only Mode)
+
+By default, OpenClaw maintains local file copies of sessions even when a database adapter (like Postgres) is active. This acts as a safety fused for tools expecting files.
+
+To fully disable local file writes and use the database as the **exclusive** source of truth:
+
+```json5
+{
+  storage: {
+    sessions: {
+      readFromPostgres: { enabled: true },
+      // Disable legacy file sync
+      legacyFileSync: { enabled: false }
+    }
+  }
+}
+```
+
+> [!WARNING]
+> When `legacyFileSync` is disabled, `openclaw status` and other CLI tools running outside the container (without DB access) will no longer see session state. Ensure your database backups are robust.
+
+---
+
 ## Session keys (`sessionKey`)
 
 A `sessionKey` identifies _which conversation bucket_ you’re in (routing + isolation).

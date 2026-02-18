@@ -33,6 +33,8 @@ export type SessionEntry = {
   sessionId: string;
   updatedAt: number;
   sessionFile?: string;
+  forkedFromSessionId?: string;
+  forkedFromSeq?: number;
   /** Parent session key that spawned this session (used for sandbox session-tool scoping). */
   spawnedBy?: string;
   systemSent?: boolean;

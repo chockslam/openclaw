@@ -17,6 +17,7 @@ import type { OpenClawConfig } from "../config/config.js";
 import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { getReplyFromConfig } from "../auto-reply/reply.js";
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
+import { loadSessionStore, saveSessionStore, type SessionEntry } from "../config/sessions.js";
 import { monitorWebChannel } from "./auto-reply.js";
 import { resetLoadConfigMock, setLoadConfigMock } from "./test-helpers.js";
 
@@ -65,7 +66,7 @@ const makeSessionStore = async (
 ): Promise<{ storePath: string; cleanup: () => Promise<void> }> => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-session-"));
   const storePath = path.join(dir, "sessions.json");
-  await fs.writeFile(storePath, JSON.stringify(entries));
+  await saveSessionStore(storePath, entries as Record<string, SessionEntry>);
   const cleanup = async () => {
     // Session store writes can be in-flight when the test finishes (e.g. updateLastRoute
     // after a message flush). `fs.rm({ recursive })` can race and throw ENOTEMPTY.
@@ -226,7 +227,7 @@ describe("partial reply gating", () => {
 
     let stored: Record<string, { lastChannel?: string; lastTo?: string }> | null = null;
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      stored = JSON.parse(await fs.readFile(store.storePath, "utf8")) as Record<
+      stored = loadSessionStore(store.storePath) as Record<
         string,
         { lastChannel?: string; lastTo?: string }
       >;
@@ -291,7 +292,7 @@ describe("partial reply gating", () => {
       { lastChannel?: string; lastTo?: string; lastAccountId?: string }
     > | null = null;
     for (let attempt = 0; attempt < 50; attempt += 1) {
-      stored = JSON.parse(await fs.readFile(store.storePath, "utf8")) as Record<
+      stored = loadSessionStore(store.storePath) as Record<
         string,
         { lastChannel?: string; lastTo?: string; lastAccountId?: string }
       >;

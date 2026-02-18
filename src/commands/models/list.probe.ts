@@ -15,10 +15,6 @@ import { loadModelCatalog } from "../../agents/model-catalog.js";
 import { normalizeProviderId, parseModelRef } from "../../agents/model-selection.js";
 import { runEmbeddedPiAgent } from "../../agents/pi-embedded.js";
 import { resolveDefaultAgentWorkspaceDir } from "../../agents/workspace.js";
-import {
-  resolveSessionTranscriptPath,
-  resolveSessionTranscriptsDirForAgent,
-} from "../../config/sessions/paths.js";
 import { redactSecrets } from "../status-all/format.js";
 import { DEFAULT_PROVIDER, formatMs } from "./shared.js";
 
@@ -291,12 +287,11 @@ async function probeTarget(params: {
   agentId: string;
   agentDir: string;
   workspaceDir: string;
-  sessionDir: string;
   target: AuthProbeTarget;
   timeoutMs: number;
   maxTokens: number;
 }): Promise<AuthProbeResult> {
-  const { cfg, agentId, agentDir, workspaceDir, sessionDir, target, timeoutMs, maxTokens } = params;
+  const { cfg, agentId, agentDir, workspaceDir, target, timeoutMs, maxTokens } = params;
   if (!target.model) {
     return {
       provider: target.provider,
@@ -311,8 +306,7 @@ async function probeTarget(params: {
   }
 
   const sessionId = `probe-${target.provider}-${crypto.randomUUID()}`;
-  const sessionFile = resolveSessionTranscriptPath(sessionId, agentId);
-  await fs.mkdir(sessionDir, { recursive: true });
+  const sessionFile = `session://${sessionId}`;
 
   const start = Date.now();
   try {
@@ -375,7 +369,6 @@ async function runTargetsWithConcurrency(params: {
   const agentId = resolveDefaultAgentId(cfg);
   const agentDir = resolveOpenClawAgentDir();
   const workspaceDir = resolveAgentWorkspaceDir(cfg, agentId) ?? resolveDefaultAgentWorkspaceDir();
-  const sessionDir = resolveSessionTranscriptsDirForAgent(agentId);
 
   await fs.mkdir(workspaceDir, { recursive: true });
 
@@ -401,7 +394,6 @@ async function runTargetsWithConcurrency(params: {
         agentId,
         agentDir,
         workspaceDir,
-        sessionDir,
         target,
         timeoutMs,
         maxTokens,

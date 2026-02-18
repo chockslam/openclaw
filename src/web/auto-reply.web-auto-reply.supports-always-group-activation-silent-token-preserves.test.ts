@@ -16,6 +16,7 @@ vi.mock("../agents/pi-embedded.js", () => ({
 
 import { expectInboundContextContract } from "../../test/helpers/inbound-contract.js";
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
+import { saveSessionStore, type SessionEntry } from "../config/sessions.js";
 import { resetLogger, setLoggerOverride } from "../logging.js";
 import { monitorWebChannel, SILENT_REPLY_TOKEN } from "./auto-reply.js";
 import { resetBaileysMocks, resetLoadConfigMock, setLoadConfigMock } from "./test-helpers.js";
@@ -65,7 +66,7 @@ const makeSessionStore = async (
 ): Promise<{ storePath: string; cleanup: () => Promise<void> }> => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-session-"));
   const storePath = path.join(dir, "sessions.json");
-  await fs.writeFile(storePath, JSON.stringify(entries));
+  await saveSessionStore(storePath, entries as Record<string, SessionEntry>);
   const cleanup = async () => {
     // Session store writes can be in-flight when the test finishes (e.g. updateLastRoute
     // after a message flush). `fs.rm({ recursive })` can race and throw ENOTEMPTY.

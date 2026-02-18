@@ -1,5 +1,4 @@
 import crypto from "node:crypto";
-import fs from "node:fs";
 import type { TypingMode } from "../../config/types.js";
 import type { OriginatingChannelType, TemplateContext } from "../templating.js";
 import type { GetReplyOptions, ReplyPayload } from "../types.js";
@@ -10,12 +9,7 @@ import { resolveModelAuthMode, resolveModelAuthModeAsync } from "../../agents/mo
 import { isCliProvider } from "../../agents/model-selection.js";
 import { queueEmbeddedPiMessage } from "../../agents/pi-embedded.js";
 import { hasNonzeroUsage } from "../../agents/usage.js";
-import {
-  resolveAgentIdFromSessionKey,
-  resolveSessionFilePath,
-  resolveSessionTranscriptPath,
-  type SessionEntry,
-} from "../../config/sessions.js";
+import { resolveAgentIdFromSessionKey, type SessionEntry } from "../../config/sessions.js";
 import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { emitDiagnosticEvent, isDiagnosticsEnabled } from "../../infra/diagnostic-events.js";
 import { defaultRuntime } from "../../runtime.js";
@@ -255,11 +249,7 @@ export async function runReplyAgent(params: {
       abortedLastRun: false,
     };
     const agentId = resolveAgentIdFromSessionKey(sessionKey);
-    const nextSessionFile = resolveSessionTranscriptPath(
-      nextSessionId,
-      agentId,
-      sessionCtx.MessageThreadId,
-    );
+    const nextSessionFile = `session://${nextSessionId}`;
     nextEntry.sessionFile = nextSessionFile;
     activeSessionStore[sessionKey] = nextEntry;
     try {
@@ -277,18 +267,16 @@ export async function runReplyAgent(params: {
     activeIsNewSession = true;
     defaultRuntime.error(buildLogMessage(nextSessionId));
     if (cleanupTranscripts && prevSessionId) {
-      const transcriptCandidates = new Set<string>();
-      const resolved = resolveSessionFilePath(prevSessionId, prevEntry, { agentId });
-      if (resolved) {
-        transcriptCandidates.add(resolved);
-      }
-      transcriptCandidates.add(resolveSessionTranscriptPath(prevSessionId, agentId));
-      for (const candidate of transcriptCandidates) {
-        try {
-          fs.unlinkSync(candidate);
-        } catch {
-          // Best-effort cleanup.
-        }
+      try {
+        await getSessionStoreBridge().deleteTranscript({
+          sessionId: prevSessionId,
+          storePath,
+          agentId,
+        });
+      } catch (err) {
+        defaultRuntime.error(
+          `Failed to delete transcript for reset session ${prevSessionId}: ${String(err)}`,
+        );
       }
     }
     return true;
@@ -402,6 +390,21 @@ export async function runReplyAgent(params: {
     // Otherwise, a late typing trigger (e.g. from a tool callback) can outlive the run and
     // keep the typing indicator stuck.
     if (payloadArray.length === 0) {
+      const embeddedError = runResult.meta?.error;
+      const details = [
+        `sessionId=${followupRun.run.sessionId}`,
+        `sessionKey=${sessionKey ?? "unknown"}`,
+        `provider=${providerUsed}`,
+        `model=${modelUsed}`,
+        `payloads=${payloadArray.length}`,
+      ].join(" ");
+      if (embeddedError?.message) {
+        defaultRuntime.error(
+          `No reply payloads emitted after run (${details}) error=${embeddedError.message}`,
+        );
+      } else {
+        defaultRuntime.error(`No reply payloads emitted after run (${details})`);
+      }
       return finalizeWithFollowup(undefined, queueKey, runFollowupTurn);
     }
 

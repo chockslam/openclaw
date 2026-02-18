@@ -143,11 +143,12 @@ export function installSessionToolResultGuard(
 
     const result = originalAppend(nextMessage as never);
 
-    const sessionFile = (
-      sessionManager as { getSessionFile?: () => string | null }
-    ).getSessionFile?.();
-    if (sessionFile) {
-      emitSessionTranscriptUpdate(sessionFile);
+    const sessionId = (sessionManager as { getSessionId?: () => string | null }).getSessionId?.();
+    if (sessionId) {
+      emitSessionTranscriptUpdate({
+        sessionId,
+        updatedAt: Date.now(),
+      });
     }
 
     if (toolCalls.length > 0) {

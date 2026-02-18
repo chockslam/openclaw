@@ -1,10 +1,9 @@
-import { CURRENT_SESSION_VERSION, SessionManager } from "@mariozechner/pi-coding-agent";
-import fs from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { SessionEntry } from "./types.js";
 import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { emitSessionTranscriptUpdate } from "../../sessions/transcript-events.js";
-import { resolveDefaultSessionStorePath, resolveSessionTranscriptPath } from "./paths.js";
+import { resolveDefaultSessionStorePath } from "./paths.js";
 
 function stripQuery(value: string): string {
   const noHash = value.split("#")[0] ?? value;
@@ -57,24 +56,6 @@ export function resolveMirroredTranscriptText(params: {
   return trimmed ? trimmed : null;
 }
 
-async function ensureSessionHeader(params: {
-  sessionFile: string;
-  sessionId: string;
-}): Promise<void> {
-  if (fs.existsSync(params.sessionFile)) {
-    return;
-  }
-  await fs.promises.mkdir(path.dirname(params.sessionFile), { recursive: true });
-  const header = {
-    type: "session",
-    version: CURRENT_SESSION_VERSION,
-    id: params.sessionId,
-    timestamp: new Date().toISOString(),
-    cwd: process.cwd(),
-  };
-  await fs.promises.writeFile(params.sessionFile, `${JSON.stringify(header)}\n`, "utf-8");
-}
-
 export async function appendAssistantMessageToSessionTranscript(params: {
   agentId?: string;
   sessionKey: string;
@@ -104,47 +85,60 @@ export async function appendAssistantMessageToSessionTranscript(params: {
     return { ok: false, reason: `unknown sessionKey: ${sessionKey}` };
   }
 
-  const sessionFile =
-    entry.sessionFile?.trim() || resolveSessionTranscriptPath(entry.sessionId, params.agentId);
-
-  await ensureSessionHeader({ sessionFile, sessionId: entry.sessionId });
-
-  const sessionManager = SessionManager.open(sessionFile);
-  sessionManager.appendMessage({
-    role: "assistant",
-    content: [{ type: "text", text: mirrorText }],
-    api: "openai-responses",
-    provider: "openclaw",
-    model: "delivery-mirror",
-    usage: {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-      totalTokens: 0,
-      cost: {
+  const now = Date.now();
+  const messageId = randomUUID().slice(0, 8);
+  const transcriptEvent = {
+    type: "message",
+    id: messageId,
+    timestamp: new Date(now).toISOString(),
+    message: {
+      role: "assistant",
+      content: [{ type: "text", text: mirrorText }],
+      api: "openai-responses",
+      provider: "openclaw",
+      model: "delivery-mirror",
+      usage: {
         input: 0,
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
-        total: 0,
+        totalTokens: 0,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+        },
       },
+      stopReason: "stop",
+      timestamp: now,
     },
-    stopReason: "stop",
-    timestamp: Date.now(),
-  });
+  } satisfies Record<string, unknown>;
 
-  if (!entry.sessionFile || entry.sessionFile !== sessionFile) {
-    await getSessionStoreBridge().updateSessionStore(storePath, (current) => {
-      // Re-read entry inside update to be safe
-      const currentEntry = current[sessionKey] ?? entry;
-      current[sessionKey] = {
-        ...currentEntry,
-        sessionFile,
-      };
+  let sessionFile = `session://${entry.sessionId}`;
+  try {
+    const appended = await getSessionStoreBridge().appendTranscriptEvent({
+      sessionId: entry.sessionId,
+      storePath,
+      agentId: params.agentId,
+      event: transcriptEvent,
+      createIfMissing: true,
     });
+    if (appended.sessionFile?.trim()) {
+      sessionFile = appended.sessionFile.trim();
+    }
+  } catch (err) {
+    return {
+      ok: false,
+      reason: err instanceof Error ? err.message : String(err),
+    };
   }
 
-  emitSessionTranscriptUpdate(sessionFile);
+  emitSessionTranscriptUpdate({
+    sessionId: entry.sessionId,
+    agentId: params.agentId,
+    updatedAt: Date.now(),
+  });
   return { ok: true, sessionFile };
 }

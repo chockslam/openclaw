@@ -67,7 +67,7 @@ export function applySettings(host: SettingsHost, next: UiSettings) {
 
 export function setLastActiveSessionKey(host: SettingsHost, next: string) {
   const trimmed = next.trim();
-  if (!trimmed) {
+  if (!trimmed || trimmed === "undefined") {
     return;
   }
   if (host.settings.lastActiveSessionKey === trimmed) {

@@ -320,6 +320,36 @@ function removeDirIfEmpty(dir: string) {
   }
 }
 
+function isCrossDeviceRenameError(err: unknown): boolean {
+  return (
+    typeof err === "object" &&
+    err !== null &&
+    "code" in err &&
+    String((err as { code?: unknown }).code) === "EXDEV"
+  );
+}
+
+function movePathWithCrossDeviceFallback(from: string, to: string): void {
+  try {
+    fs.renameSync(from, to);
+    return;
+  } catch (err) {
+    if (!isCrossDeviceRenameError(err)) {
+      throw err;
+    }
+  }
+
+  const stat = fs.statSync(from);
+  if (stat.isDirectory()) {
+    fs.cpSync(from, to, { recursive: true, force: false, errorOnExist: true });
+    fs.rmSync(from, { recursive: true, force: true });
+    return;
+  }
+
+  fs.copyFileSync(from, to);
+  fs.rmSync(from, { force: true });
+}
+
 export function resetAutoMigrateLegacyStateForTest() {
   autoMigrateChecked = false;
 }
@@ -688,7 +718,7 @@ async function migrateLegacySessions(
       continue;
     }
     try {
-      fs.renameSync(from, to);
+      movePathWithCrossDeviceFallback(from, to);
       changes.push(`Moved ${entry.name} → agents/${detected.targetAgentId}/sessions`);
     } catch (err) {
       warnings.push(`Failed moving ${from}: ${String(err)}`);
@@ -740,7 +770,7 @@ export async function migrateLegacyAgentDir(
       continue;
     }
     try {
-      fs.renameSync(from, to);
+      movePathWithCrossDeviceFallback(from, to);
       changes.push(`Moved agent file ${entry.name} → agents/${detected.targetAgentId}/agent`);
     } catch (err) {
       warnings.push(`Failed moving ${from}: ${String(err)}`);
@@ -794,7 +824,7 @@ async function migrateLegacyWhatsAppAuth(
       continue;
     }
     try {
-      fs.renameSync(from, to);
+      movePathWithCrossDeviceFallback(from, to);
       changes.push(`Moved WhatsApp auth ${entry.name} → whatsapp/default`);
     } catch (err) {
       warnings.push(`Failed moving ${from}: ${String(err)}`);

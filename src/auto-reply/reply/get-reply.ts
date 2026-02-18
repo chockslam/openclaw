@@ -193,6 +193,9 @@ export async function getReplyFromConfig(
     }
   }
 
+  // Transcript persistence is owned by the embedded runtime/session manager.
+  // Keeping a single canonical writer avoids duplicate user rows (plain + [message_id]).
+
   await applyResetModelOverride({
     cfg,
     resetTriggered,
@@ -321,7 +324,7 @@ export async function getReplyFromConfig(
     workspaceDir,
   });
 
-  return runPreparedReply({
+  const result = await runPreparedReply({
     ctx,
     sessionCtx,
     cfg,
@@ -366,4 +369,6 @@ export async function getReplyFromConfig(
     workspaceDir,
     abortedLastRun,
   });
+
+  return result;
 }

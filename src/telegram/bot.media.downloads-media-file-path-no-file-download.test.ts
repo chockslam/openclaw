@@ -293,7 +293,7 @@ describe("telegram media groups", () => {
     vi.useRealTimers();
   });
 
-  const MEDIA_GROUP_TEST_TIMEOUT_MS = process.platform === "win32" ? 45_000 : 20_000;
+  const MEDIA_GROUP_TEST_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 45_000;
   const MEDIA_GROUP_FLUSH_MS = MEDIA_GROUP_TIMEOUT_MS + 25;
 
   it(

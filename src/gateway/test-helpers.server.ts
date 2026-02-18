@@ -19,6 +19,7 @@ import { DEFAULT_AGENT_ID, toAgentStoreSessionKey } from "../routing/session-key
 import { getDeterministicFreePortBlock } from "../test-utils/ports.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { buildDeviceAuthPayload } from "./device-auth.js";
+import { createMockStorageAdapter } from "./mock-storage-adapter.js";
 import { PROTOCOL_VERSION } from "./protocol/index.js";
 import {
   agentCommand,
@@ -275,7 +276,10 @@ export function onceMessage<T = unknown>(
 
 export async function startGatewayServer(port: number, opts?: GatewayServerOptions) {
   const mod = await serverModulePromise;
-  return await mod.startGatewayServer(port, opts);
+  return await mod.startGatewayServer(port, {
+    ...opts,
+    storageAdapter: opts?.storageAdapter ?? createMockStorageAdapter(),
+  });
 }
 
 export async function startServerWithClient(token?: string, opts?: GatewayServerOptions) {

@@ -1,9 +1,4 @@
-import {
-  createAgentSession,
-  estimateTokens,
-  SessionManager,
-  SettingsManager,
-} from "@mariozechner/pi-coding-agent";
+import { createAgentSession, estimateTokens, SettingsManager } from "@mariozechner/pi-coding-agent";
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { ReasoningLevel, ThinkLevel } from "../../auto-reply/thinking.js";
@@ -35,20 +30,15 @@ import {
   resolveModelAuthModeAsync,
 } from "../model-auth.js";
 import { ensureOpenClawModelsJson } from "../models-config.js";
-import {
-  ensureSessionHeader,
-  validateAnthropicTurns,
-  validateGeminiTurns,
-} from "../pi-embedded-helpers.js";
+import { validateAnthropicTurns, validateGeminiTurns } from "../pi-embedded-helpers.js";
 import {
   ensurePiCompactionReserveTokens,
   resolveCompactionReserveTokensFloor,
 } from "../pi-settings.js";
 import { createOpenClawCodingTools } from "../pi-tools.js";
 import { resolveSandboxContext } from "../sandbox.js";
-import { repairSessionFileIfNeeded } from "../session-file-repair.js";
+import { loadDbSessionRuntime, withDbSessionLock } from "../session-runtime/db-session-runtime.js";
 import { guardSessionManager } from "../session-tool-result-guard-wrapper.js";
-import { acquireSessionWriteLock } from "../session-write-lock.js";
 import {
   applySkillEnvOverrides,
   applySkillEnvOverridesFromSnapshot,
@@ -68,7 +58,6 @@ import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
 import { log } from "./logger.js";
 import { buildModelAliasLines, resolveModel } from "./model.js";
 import { buildEmbeddedSandboxInfo } from "./sandbox-info.js";
-import { prewarmSessionFile, trackSessionManagerAccess } from "./session-manager-cache.js";
 import {
   applySystemPromptOverrideToSession,
   buildEmbeddedSystemPrompt,
@@ -181,11 +170,6 @@ export async function compactEmbeddedPiSessionDirect(
       : sandbox.workspaceDir
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
-  await ensureSessionHeader({
-    sessionFile: params.sessionFile,
-    sessionId: params.sessionId,
-    cwd: effectiveWorkspace,
-  });
 
   let restoreSkillEnv: (() => void) | undefined;
   process.chdir(effectiveWorkspace);
@@ -365,116 +349,117 @@ export async function compactEmbeddedPiSessionDirect(
     });
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
 
-    const sessionLock = await acquireSessionWriteLock({
-      sessionFile: params.sessionFile,
-    });
-    try {
-      await repairSessionFileIfNeeded({
-        sessionFile: params.sessionFile,
-        warn: (message) => log.warn(message),
-      });
-      await prewarmSessionFile(params.sessionFile);
-      const transcriptPolicy = resolveTranscriptPolicy({
-        modelApi: model.api,
-        provider,
-        modelId,
-      });
-      const sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
+    return await withDbSessionLock(
+      {
+        sessionId: params.sessionId,
         agentId: sessionAgentId,
-        sessionKey: params.sessionKey,
-        allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
-      });
-      trackSessionManagerAccess(params.sessionFile);
-      const settingsManager = SettingsManager.create(effectiveWorkspace, agentDir);
-      ensurePiCompactionReserveTokens({
-        settingsManager,
-        minReserveTokens: resolveCompactionReserveTokensFloor(params.config),
-      });
-      // Call for side effects (sets compaction/pruning runtime state)
-      buildEmbeddedExtensionPaths({
-        cfg: params.config,
-        sessionManager,
-        provider,
-        modelId,
-        model,
-      });
-
-      const { builtInTools, customTools } = splitSdkTools({
-        tools,
-        sandboxEnabled: !!sandbox?.enabled,
-      });
-
-      const { session } = await createAgentSession({
-        cwd: resolvedWorkspace,
-        agentDir,
-        authStorage,
-        modelRegistry,
-        model,
-        thinkingLevel: mapThinkingLevel(params.thinkLevel),
-        tools: builtInTools,
-        customTools,
-        sessionManager,
-        settingsManager,
-      });
-      applySystemPromptOverrideToSession(session, systemPromptOverride());
-
-      try {
-        const prior = await sanitizeSessionHistory({
-          messages: session.messages,
+      },
+      async () => {
+        const transcriptPolicy = resolveTranscriptPolicy({
           modelApi: model.api,
-          modelId,
           provider,
-          sessionManager,
-          sessionId: params.sessionId,
-          policy: transcriptPolicy,
+          modelId,
         });
-        const validatedGemini = transcriptPolicy.validateGeminiTurns
-          ? validateGeminiTurns(prior)
-          : prior;
-        const validated = transcriptPolicy.validateAnthropicTurns
-          ? validateAnthropicTurns(validatedGemini)
-          : validatedGemini;
-        const limited = limitHistoryTurns(
-          validated,
-          getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
-        );
-        if (limited.length > 0) {
-          session.agent.replaceMessages(limited);
-        }
-        const result = await session.compact(params.customInstructions);
-        // Estimate tokens after compaction by summing token estimates for remaining messages
-        let tokensAfter: number | undefined;
+        const dbSessionRuntime = await loadDbSessionRuntime({
+          sessionId: params.sessionId,
+          agentId: sessionAgentId,
+          cwd: effectiveWorkspace,
+        });
+        const sessionManager = guardSessionManager(dbSessionRuntime.sessionManager, {
+          agentId: sessionAgentId,
+          sessionKey: params.sessionKey,
+          allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
+        });
+        const settingsManager = SettingsManager.create(effectiveWorkspace, agentDir);
+        ensurePiCompactionReserveTokens({
+          settingsManager,
+          minReserveTokens: resolveCompactionReserveTokensFloor(params.config),
+        });
+        // Call for side effects (sets compaction/pruning runtime state)
+        buildEmbeddedExtensionPaths({
+          cfg: params.config,
+          sessionManager,
+          provider,
+          modelId,
+          model,
+        });
+
+        const { builtInTools, customTools } = splitSdkTools({
+          tools,
+          sandboxEnabled: !!sandbox?.enabled,
+        });
+
+        const { session } = await createAgentSession({
+          cwd: resolvedWorkspace,
+          agentDir,
+          authStorage,
+          modelRegistry,
+          model,
+          thinkingLevel: mapThinkingLevel(params.thinkLevel),
+          tools: builtInTools,
+          customTools,
+          sessionManager,
+          settingsManager,
+        });
+        applySystemPromptOverrideToSession(session, systemPromptOverride());
+
         try {
-          tokensAfter = 0;
-          for (const message of session.messages) {
-            tokensAfter += estimateTokens(message);
+          const prior = await sanitizeSessionHistory({
+            messages: session.messages,
+            modelApi: model.api,
+            modelId,
+            provider,
+            sessionManager,
+            sessionId: params.sessionId,
+            policy: transcriptPolicy,
+          });
+          const validatedGemini = transcriptPolicy.validateGeminiTurns
+            ? validateGeminiTurns(prior)
+            : prior;
+          const validated = transcriptPolicy.validateAnthropicTurns
+            ? validateAnthropicTurns(validatedGemini)
+            : validatedGemini;
+          const limited = limitHistoryTurns(
+            validated,
+            getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
+          );
+          if (limited.length > 0) {
+            session.agent.replaceMessages(limited);
           }
-          // Sanity check: tokensAfter should be less than tokensBefore
-          if (tokensAfter > result.tokensBefore) {
-            tokensAfter = undefined; // Don't trust the estimate
+          const result = await session.compact(params.customInstructions);
+          // Estimate tokens after compaction by summing token estimates for remaining messages
+          let tokensAfter: number | undefined;
+          try {
+            tokensAfter = 0;
+            for (const message of session.messages) {
+              tokensAfter += estimateTokens(message);
+            }
+            // Sanity check: tokensAfter should be less than tokensBefore
+            if (tokensAfter > result.tokensBefore) {
+              tokensAfter = undefined; // Don't trust the estimate
+            }
+          } catch {
+            // If estimation fails, leave tokensAfter undefined
+            tokensAfter = undefined;
           }
-        } catch {
-          // If estimation fails, leave tokensAfter undefined
-          tokensAfter = undefined;
+          await dbSessionRuntime.replaceTranscriptFromManager();
+          return {
+            ok: true,
+            compacted: true,
+            result: {
+              summary: result.summary,
+              firstKeptEntryId: result.firstKeptEntryId,
+              tokensBefore: result.tokensBefore,
+              tokensAfter,
+              details: result.details,
+            },
+          };
+        } finally {
+          sessionManager.flushPendingToolResults?.();
+          session.dispose();
         }
-        return {
-          ok: true,
-          compacted: true,
-          result: {
-            summary: result.summary,
-            firstKeptEntryId: result.firstKeptEntryId,
-            tokensBefore: result.tokensBefore,
-            tokensAfter,
-            details: result.details,
-          },
-        };
-      } finally {
-        sessionManager.flushPendingToolResults?.();
-        session.dispose();
-      }
-    } finally {
-      await sessionLock.release();
-    }
+      },
+    );
   } catch (err) {
     return {
       ok: false,

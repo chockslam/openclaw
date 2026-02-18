@@ -1,10 +1,14 @@
-import fs from "node:fs/promises";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CliDeps } from "../cli/deps.js";
 import type { OpenClawConfig } from "../config/config.js";
 import type { CronJob } from "./types.js";
+import { createMockStorageAdapter } from "../../test/helpers/mock-storage-adapter.js";
 import { withTempHome as withTempHomeBase } from "../../test/helpers/temp-home.js";
+import {
+  getSessionStoreBridge,
+  initializeSessionStoreBridge,
+} from "../gateway/session-store-bridge.js";
 
 vi.mock("../agents/pi-embedded.js", () => ({
   abortEmbeddedPiRun: vi.fn().mockReturnValue(false),
@@ -20,35 +24,33 @@ import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { runCronIsolatedAgentTurn } from "./isolated-agent.js";
 
 async function withTempHome<T>(fn: (home: string) => Promise<T>): Promise<T> {
-  return withTempHomeBase(fn, { prefix: "openclaw-cron-" });
+  return withTempHomeBase(
+    async (home) => {
+      initializeSessionStoreBridge(createMockStorageAdapter());
+      return await fn(home);
+    },
+    { prefix: "openclaw-cron-" },
+  );
 }
 
 async function writeSessionStore(home: string) {
-  const dir = path.join(home, ".openclaw", "sessions");
-  await fs.mkdir(dir, { recursive: true });
-  const storePath = path.join(dir, "sessions.json");
-  await fs.writeFile(
-    storePath,
-    JSON.stringify(
-      {
-        "agent:main:main": {
-          sessionId: "main-session",
-          updatedAt: Date.now(),
-          lastProvider: "webchat",
-          lastTo: "",
-        },
-      },
-      null,
-      2,
-    ),
-    "utf-8",
-  );
+  const storePath = path.join(home, ".openclaw", "sessions", "sessions.json");
+  await getSessionStoreBridge().updateSessionStore(storePath, (store) => {
+    store["agent:main:main"] = {
+      sessionId: "main-session",
+      updatedAt: Date.now(),
+      lastProvider: "webchat",
+      lastTo: "",
+    };
+  });
   return storePath;
 }
 
 async function readSessionEntry(storePath: string, key: string) {
-  const raw = await fs.readFile(storePath, "utf-8");
-  const store = JSON.parse(raw) as Record<string, { sessionId?: string }>;
+  const store = (await getSessionStoreBridge().loadSessionStoreAsync(storePath)) as Record<
+    string,
+    { sessionId?: string }
+  >;
   return store[key];
 }
 
@@ -218,7 +220,17 @@ describe("runCronIsolatedAgentTurn", () => {
       };
       expect(call?.sessionKey).toBe("agent:ops:cron:job-ops");
       expect(call?.workspaceDir).toBe(opsWorkspace);
-      expect(call?.sessionFile).toContain(path.join("agents", "ops"));
+      expect(call?.sessionFile).toMatch(/^session:\/\//);
+      const opsStorePath = path.join(
+        home,
+        ".openclaw",
+        "agents",
+        "ops",
+        "sessions",
+        "sessions.json",
+      );
+      const opsStore = await getSessionStoreBridge().loadSessionStoreAsync(opsStorePath);
+      expect(opsStore["agent:ops:cron:job-ops"]).toBeDefined();
     });
   });
 

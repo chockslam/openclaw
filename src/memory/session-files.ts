@@ -1,6 +1,4 @@
-import fs from "node:fs/promises";
-import path from "node:path";
-import { resolveSessionTranscriptsDirForAgent } from "../config/sessions/paths.js";
+import { getSessionStoreBridge } from "../gateway/session-store-bridge.js";
 import { redactSensitiveText } from "../logging/redact.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { hashText } from "./internal.js";
@@ -16,22 +14,31 @@ export type SessionFileEntry = {
   content: string;
 };
 
-export async function listSessionFilesForAgent(agentId: string): Promise<string[]> {
-  const dir = resolveSessionTranscriptsDirForAgent(agentId);
-  try {
-    const entries = await fs.readdir(dir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isFile())
-      .map((entry) => entry.name)
-      .filter((name) => name.endsWith(".jsonl"))
-      .map((name) => path.join(dir, name));
-  } catch {
-    return [];
+function parseSessionIdFromSource(source: string): string {
+  const trimmed = source.trim();
+  if (!trimmed) {
+    return "";
   }
+  if (trimmed.startsWith("session://")) {
+    return trimmed.slice("session://".length).trim();
+  }
+  const withoutQuery = trimmed.split("?")[0]?.split("#")[0] ?? trimmed;
+  const tail = withoutQuery.split("/").pop() ?? withoutQuery;
+  return tail.replace(/\.jsonl$/i, "").trim();
+}
+
+export async function listSessionFilesForAgent(agentId: string): Promise<string[]> {
+  const bridge = getSessionStoreBridge();
+  const sessions = await bridge.listSessions({ agentId });
+  return sessions
+    .map(({ entry, key }) => entry.sessionId?.trim() || key.trim())
+    .filter((sessionId) => Boolean(sessionId))
+    .map((sessionId) => `session://${sessionId}`);
 }
 
 export function sessionPathForFile(absPath: string): string {
-  return path.join("sessions", path.basename(absPath)).replace(/\\/g, "/");
+  const sessionId = parseSessionIdFromSource(absPath);
+  return `sessions/${sessionId}`;
 }
 
 function normalizeSessionText(value: string): string {
@@ -71,8 +78,26 @@ export function extractSessionText(content: unknown): string | null {
 
 export async function buildSessionEntry(absPath: string): Promise<SessionFileEntry | null> {
   try {
-    const stat = await fs.stat(absPath);
-    const raw = await fs.readFile(absPath, "utf-8");
+    const sessionId = parseSessionIdFromSource(absPath);
+    if (!sessionId) {
+      return null;
+    }
+
+    const bridge = getSessionStoreBridge();
+    const meta = await bridge.getSessionMetadata(sessionId);
+    if (!meta) {
+      return null;
+    }
+
+    const raw = await bridge.getSessionContent(sessionId);
+    if (raw === null) {
+      return null;
+    }
+
+    if (meta.size === 0) {
+      meta.size = Buffer.byteLength(raw, "utf-8");
+    }
+
     const lines = raw.split("\n");
     const collected: string[] = [];
     for (const line of lines) {
@@ -109,17 +134,18 @@ export async function buildSessionEntry(absPath: string): Promise<SessionFileEnt
       const label = message.role === "user" ? "User" : "Assistant";
       collected.push(`${label}: ${safe}`);
     }
+
     const content = collected.join("\n");
     return {
       path: sessionPathForFile(absPath),
       absPath,
-      mtimeMs: stat.mtimeMs,
-      size: stat.size,
+      mtimeMs: meta.mtimeMs,
+      size: meta.size,
       hash: hashText(content),
       content,
     };
   } catch (err) {
-    log.debug(`Failed reading session file ${absPath}: ${String(err)}`);
+    log.debug(`Failed reading session transcript ${absPath}: ${String(err)}`);
     return null;
   }
 }

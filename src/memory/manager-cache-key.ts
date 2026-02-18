@@ -39,6 +39,20 @@ export function computeMemoryManagerCacheKey(params: {
       store: {
         driver: settings.store.driver,
         path: settings.store.path,
+        postgres: settings.store.postgres
+          ? {
+              tenantId: settings.store.postgres.tenantId,
+              schema: settings.store.postgres.schema,
+              sessionsTable: settings.store.postgres.sessionsTable,
+              sessionMessagesTable: settings.store.postgres.sessionMessagesTable,
+              filesTable: settings.store.postgres.filesTable,
+              chunksTable: settings.store.postgres.chunksTable,
+              embeddingCacheTable: settings.store.postgres.embeddingCacheTable,
+              indexStateTable: settings.store.postgres.indexStateTable,
+              maxConnections: settings.store.postgres.maxConnections,
+              ssl: settings.store.postgres.ssl,
+            }
+          : undefined,
         vector: {
           enabled: settings.store.vector.enabled,
           extensionPath: settings.store.vector.extensionPath,

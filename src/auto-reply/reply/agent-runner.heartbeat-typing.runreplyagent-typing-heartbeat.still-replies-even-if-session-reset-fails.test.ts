@@ -7,7 +7,7 @@ import type { TypingMode } from "../../config/types.js";
 import type { TemplateContext } from "../templating.js";
 import type { GetReplyOptions } from "../types.js";
 import type { FollowupRun, QueueSettings } from "./queue.js";
-import * as sessions from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { createMockTypingController } from "./test-helpers.js";
 
 const runEmbeddedPiAgentMock = vi.fn();
@@ -125,16 +125,21 @@ describe("runReplyAgent typing (heartbeat)", () => {
     const prevStateDir = process.env.OPENCLAW_STATE_DIR;
     const stateDir = await fs.mkdtemp(path.join(tmpdir(), "openclaw-session-reset-fail-"));
     process.env.OPENCLAW_STATE_DIR = stateDir;
-    const saveSpy = vi.spyOn(sessions, "saveSessionStore").mockRejectedValueOnce(new Error("boom"));
+    const updateSpy = vi
+      .spyOn(getSessionStoreBridge(), "updateSessionStore")
+      .mockRejectedValueOnce(new Error("boom"));
     try {
       const sessionId = "session-corrupt";
       const storePath = path.join(stateDir, "sessions", "sessions.json");
       const sessionEntry = { sessionId, updatedAt: Date.now() };
       const sessionStore = { main: sessionEntry };
 
-      const transcriptPath = sessions.resolveSessionTranscriptPath(sessionId);
-      await fs.mkdir(path.dirname(transcriptPath), { recursive: true });
-      await fs.writeFile(transcriptPath, "bad", "utf-8");
+      await getSessionStoreBridge().appendTranscriptEvent({
+        sessionId,
+        storePath,
+        event: { type: "message", message: { role: "user", content: "bad" } },
+        createIfMissing: true,
+      });
 
       runEmbeddedPiAgentMock.mockImplementationOnce(async () => {
         throw new Error(
@@ -154,9 +159,13 @@ describe("runReplyAgent typing (heartbeat)", () => {
         text: expect.stringContaining("Session history was corrupted"),
       });
       expect(sessionStore.main).toBeUndefined();
-      await expect(fs.access(transcriptPath)).rejects.toThrow();
+      const events = await getSessionStoreBridge().readTranscriptEvents({
+        sessionId,
+        order: "asc",
+      });
+      expect(events).toHaveLength(0);
     } finally {
-      saveSpy.mockRestore();
+      updateSpy.mockRestore();
       if (prevStateDir) {
         process.env.OPENCLAW_STATE_DIR = prevStateDir;
       } else {

@@ -265,8 +265,32 @@ export type MemorySearchConfig = {
   };
   /** Index storage configuration. */
   store?: {
-    driver?: "sqlite";
+    driver?: "sqlite" | "postgres";
     path?: string;
+    postgres?: {
+      /** Postgres connection URL (defaults to OPENCLAW_MEMORY_POSTGRES_URL or POSTGRES_URL). */
+      url?: string;
+      /** Optional tenant key used to isolate multi-tenant memory rows (default: "default"). */
+      tenantId?: string;
+      /** Optional DB schema name (default: "public"). */
+      schema?: string;
+      /** Optional override for sessions table used for transcript indexing (default: "sessions"). */
+      sessionsTable?: string;
+      /** Optional override for transcript messages table (default: "session_messages"). */
+      sessionMessagesTable?: string;
+      /** Optional override for memory file state table (default: "memory_files"). */
+      filesTable?: string;
+      /** Optional override for memory chunks table (default: "memory_chunks"). */
+      chunksTable?: string;
+      /** Optional override for embedding cache table (default: "memory_embedding_cache"). */
+      embeddingCacheTable?: string;
+      /** Optional override for index state table (default: "memory_index_state"). */
+      indexStateTable?: string;
+      /** Optional max pool size for Postgres connections (default: 10). */
+      maxConnections?: number;
+      /** Force SSL on/off for Postgres connections. */
+      ssl?: boolean;
+    };
     vector?: {
       /** Enable sqlite-vec extension for vector search (default: true). */
       enabled?: boolean;

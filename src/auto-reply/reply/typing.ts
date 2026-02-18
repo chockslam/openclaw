@@ -4,7 +4,7 @@ export type TypingController = {
   onReplyStart: () => Promise<void>;
   startTypingLoop: () => Promise<void>;
   startTypingOnText: (text?: string) => Promise<void>;
-  refreshTypingTtl: () => void;
+  refreshTypingTtl: (reason?: string) => void;
   isActive: () => boolean;
   markRunComplete: () => void;
   markDispatchIdle: () => void;
@@ -17,6 +17,7 @@ export function createTypingController(params: {
   typingTtlMs?: number;
   silentToken?: string;
   log?: (message: string) => void;
+  label?: string;
 }): TypingController {
   const {
     onReplyStart,
@@ -24,7 +25,22 @@ export function createTypingController(params: {
     typingTtlMs = 2 * 60_000,
     silentToken = SILENT_REPLY_TOKEN,
     log,
+    label,
   } = params;
+  const typingDebugRaw = (process.env.OPENCLAW_DEBUG_TYPING ?? "").trim().toLowerCase();
+  const typingDebugEnabled =
+    typingDebugRaw === "1" ||
+    typingDebugRaw === "true" ||
+    typingDebugRaw === "yes" ||
+    typingDebugRaw === "on";
+  const logger = log ?? ((message: string) => console.log(message));
+  const debug = (message: string) => {
+    if (!typingDebugEnabled) {
+      return;
+    }
+    const prefix = label ? `[typing][${label}]` : "[typing]";
+    logger(`${prefix} ${message}`);
+  };
   let started = false;
   let active = false;
   let runComplete = false;
@@ -43,6 +59,11 @@ export function createTypingController(params: {
     }
     return `${Math.round(ms / 1000)}s`;
   };
+  debug(
+    `controller created interval=${typingIntervalSeconds}s ttl=${formatTypingTtl(typingTtlMs)} onReplyStart=${
+      typeof onReplyStart === "function"
+    }`,
+  );
 
   const resetCycle = () => {
     started = false;
@@ -51,7 +72,7 @@ export function createTypingController(params: {
     dispatchIdle = false;
   };
 
-  const cleanup = () => {
+  const cleanup = (reason = "unknown") => {
     if (sealed) {
       return;
     }
@@ -65,9 +86,10 @@ export function createTypingController(params: {
     }
     resetCycle();
     sealed = true;
+    debug(`cleanup reason=${reason}`);
   };
 
-  const refreshTypingTtl = () => {
+  const refreshTypingTtl = (reason = "unspecified") => {
     if (sealed) {
       return;
     }
@@ -85,8 +107,9 @@ export function createTypingController(params: {
         return;
       }
       log?.(`typing TTL reached (${formatTypingTtl(typingTtlMs)}); stopping typing indicator`);
-      cleanup();
+      cleanup("ttl");
     }, typingTtlMs);
+    debug(`ttl refreshed reason=${reason}`);
   };
 
   const isActive = () => active && !sealed;
@@ -95,15 +118,18 @@ export function createTypingController(params: {
     if (sealed) {
       return;
     }
+    debug("trigger onReplyStart");
     await onReplyStart?.();
   };
 
   const ensureStart = async () => {
     if (sealed) {
+      debug("ensureStart ignored sealed=true");
       return;
     }
     // Late callbacks after a run completed should never restart typing.
     if (runComplete) {
+      debug("ensureStart ignored runComplete=true");
       return;
     }
     if (!active) {
@@ -113,6 +139,7 @@ export function createTypingController(params: {
       return;
     }
     started = true;
+    debug("ensureStart starting typing");
     await triggerTyping();
   };
 
@@ -121,22 +148,26 @@ export function createTypingController(params: {
       return;
     }
     // Stop only when the model run is done and the dispatcher queue is empty.
+    debug(`maybeStopOnIdle runComplete=${runComplete} dispatchIdle=${dispatchIdle}`);
     if (runComplete && dispatchIdle) {
-      cleanup();
+      cleanup("run-complete+dispatch-idle");
     }
   };
 
   const startTypingLoop = async () => {
     if (sealed) {
+      debug("startTypingLoop ignored sealed=true");
       return;
     }
     if (runComplete) {
+      debug("startTypingLoop ignored runComplete=true");
       return;
     }
     // Always refresh TTL when called, even if loop already running.
     // This keeps typing alive during long tool executions.
-    refreshTypingTtl();
+    refreshTypingTtl("start-typing-loop");
     if (!onReplyStart) {
+      debug("startTypingLoop skipped no onReplyStart");
       return;
     }
     if (typingIntervalMs <= 0) {
@@ -147,32 +178,40 @@ export function createTypingController(params: {
     }
     await ensureStart();
     typingTimer = setInterval(() => {
+      debug("typing interval tick");
       void triggerTyping();
     }, typingIntervalMs);
+    debug(`typing loop started intervalMs=${typingIntervalMs}`);
   };
 
   const startTypingOnText = async (text?: string) => {
     if (sealed) {
+      debug("startTypingOnText ignored sealed=true");
       return;
     }
     const trimmed = text?.trim();
     if (!trimmed) {
+      debug("startTypingOnText ignored empty-text");
       return;
     }
     if (silentToken && isSilentReplyText(trimmed, silentToken)) {
+      debug("startTypingOnText ignored silent-token");
       return;
     }
-    refreshTypingTtl();
+    debug(`startTypingOnText len=${trimmed.length}`);
+    refreshTypingTtl("text-delta");
     await startTypingLoop();
   };
 
   const markRunComplete = () => {
     runComplete = true;
+    debug("markRunComplete");
     maybeStopOnIdle();
   };
 
   const markDispatchIdle = () => {
     dispatchIdle = true;
+    debug("markDispatchIdle");
     maybeStopOnIdle();
   };
 

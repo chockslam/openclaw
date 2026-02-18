@@ -348,8 +348,24 @@ export const MemorySearchSchema = z
       .optional(),
     store: z
       .object({
-        driver: z.literal("sqlite").optional(),
+        driver: z.union([z.literal("sqlite"), z.literal("postgres")]).optional(),
         path: z.string().optional(),
+        postgres: z
+          .object({
+            url: z.string().optional(),
+            tenantId: z.string().optional(),
+            schema: z.string().optional(),
+            sessionsTable: z.string().optional(),
+            sessionMessagesTable: z.string().optional(),
+            filesTable: z.string().optional(),
+            chunksTable: z.string().optional(),
+            embeddingCacheTable: z.string().optional(),
+            indexStateTable: z.string().optional(),
+            maxConnections: z.number().int().positive().optional(),
+            ssl: z.boolean().optional(),
+          })
+          .strict()
+          .optional(),
         vector: z
           .object({
             enabled: z.boolean().optional(),

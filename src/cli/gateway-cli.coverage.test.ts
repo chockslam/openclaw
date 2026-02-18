@@ -11,6 +11,8 @@ const forceFreePortAndWait = vi.fn(async () => ({
   waitedMs: 0,
   escalatedToSigkill: false,
 }));
+const createRuntimeStorageAdapter = vi.fn(async () => ({}));
+const closeRuntimeStorageAdapter = vi.fn(async () => {});
 const serviceIsLoaded = vi.fn().mockResolvedValue(true);
 const discoverGatewayBeacons = vi.fn(async () => []);
 const gatewayStatusCommand = vi.fn(async () => {});
@@ -60,6 +62,12 @@ vi.mock("../gateway/call.js", () => ({
 
 vi.mock("../gateway/server.js", () => ({
   startGatewayServer: (port: number, opts?: unknown) => startGatewayServer(port, opts),
+}));
+
+vi.mock("../gateway/adapters/runtime-storage.js", () => ({
+  createRuntimeStorageAdapter: () => createRuntimeStorageAdapter(),
+  closeRuntimeStorageAdapter: (storageAdapter: unknown) =>
+    closeRuntimeStorageAdapter(storageAdapter),
 }));
 
 vi.mock("../globals.js", () => ({

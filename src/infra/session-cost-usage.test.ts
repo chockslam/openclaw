@@ -1,16 +1,17 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
+import { createMockStorageAdapter } from "../../test/helpers/mock-storage-adapter.js";
+import {
+  initializeSessionStoreBridge,
+  getSessionStoreBridge,
+} from "../gateway/session-store-bridge.js";
 import { loadCostUsageSummary, loadSessionCostSummary } from "./session-cost-usage.js";
 
 describe("session cost usage", () => {
   it("aggregates daily totals with log cost and pricing fallback", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cost-"));
-    const sessionsDir = path.join(root, "agents", "main", "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
-    const sessionFile = path.join(sessionsDir, "sess-1.jsonl");
+    initializeSessionStoreBridge(createMockStorageAdapter());
+    const bridge = getSessionStoreBridge();
+    const sessionId = "sess-1";
 
     const now = new Date();
     const older = new Date(Date.now() - 40 * 24 * 60 * 60 * 1000);
@@ -66,11 +67,15 @@ describe("session cost usage", () => {
       },
     ];
 
-    await fs.writeFile(
-      sessionFile,
-      entries.map((entry) => JSON.stringify(entry)).join("\n"),
-      "utf-8",
-    );
+    await bridge.saveSession(sessionId, {
+      sessionId,
+      updatedAt: Date.now(),
+    });
+    await bridge.appendTranscriptEvents({
+      sessionId,
+      events: entries as Record<string, unknown>[],
+      createIfMissing: true,
+    });
 
     const config = {
       models: {
@@ -92,49 +97,46 @@ describe("session cost usage", () => {
       },
     } as OpenClawConfig;
 
-    const originalState = process.env.OPENCLAW_STATE_DIR;
-    process.env.OPENCLAW_STATE_DIR = root;
-    try {
-      const summary = await loadCostUsageSummary({ days: 30, config });
-      expect(summary.daily.length).toBe(1);
-      expect(summary.totals.totalTokens).toBe(50);
-      expect(summary.totals.totalCost).toBeCloseTo(0.03003, 5);
-    } finally {
-      if (originalState === undefined) {
-        delete process.env.OPENCLAW_STATE_DIR;
-      } else {
-        process.env.OPENCLAW_STATE_DIR = originalState;
-      }
-    }
+    const summary = await loadCostUsageSummary({ days: 30, config });
+    expect(summary.daily.length).toBe(1);
+    expect(summary.totals.totalTokens).toBe(50);
+    expect(summary.totals.totalCost).toBeCloseTo(0.03003, 5);
   });
 
   it("summarizes a single session file", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-cost-session-"));
-    const sessionFile = path.join(root, "session.jsonl");
+    initializeSessionStoreBridge(createMockStorageAdapter());
+    const bridge = getSessionStoreBridge();
+    const sessionId = "sess-single";
     const now = new Date();
 
-    await fs.writeFile(
-      sessionFile,
-      JSON.stringify({
-        type: "message",
-        timestamp: now.toISOString(),
-        message: {
-          role: "assistant",
-          provider: "openai",
-          model: "gpt-5.2",
-          usage: {
-            input: 10,
-            output: 20,
-            totalTokens: 30,
-            cost: { total: 0.03 },
+    await bridge.saveSession(sessionId, {
+      sessionId,
+      updatedAt: Date.now(),
+    });
+    await bridge.appendTranscriptEvents({
+      sessionId,
+      events: [
+        {
+          type: "message",
+          timestamp: now.toISOString(),
+          message: {
+            role: "assistant",
+            provider: "openai",
+            model: "gpt-5.2",
+            usage: {
+              input: 10,
+              output: 20,
+              totalTokens: 30,
+              cost: { total: 0.03 },
+            },
           },
         },
-      }),
-      "utf-8",
-    );
+      ],
+      createIfMissing: true,
+    });
 
     const summary = await loadSessionCostSummary({
-      sessionFile,
+      sessionId,
     });
     expect(summary?.totalCost).toBeCloseTo(0.03, 5);
     expect(summary?.totalTokens).toBe(30);

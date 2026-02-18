@@ -39,6 +39,9 @@ describe("signal event handler typing + read receipts", () => {
 
   it("sends typing + read receipt for allowed DMs", async () => {
     vi.resetModules();
+    const { initializeSessionStoreBridge } = await import("../gateway/session-store-bridge.js");
+    const { createMockStorageAdapter } = await import("../../test/helpers/mock-storage-adapter.js");
+    initializeSessionStoreBridge(createMockStorageAdapter());
     const { createSignalEventHandler } = await import("./monitor/event-handler.js");
     const handler = createSignalEventHandler({
       // oxlint-disable-next-line typescript/no-explicit-any

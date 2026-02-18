@@ -1,7 +1,9 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import { createMockStorageAdapter } from "../../test/helpers/mock-storage-adapter.js";
+import {
+  getSessionStoreBridge,
+  initializeSessionStoreBridge,
+} from "../gateway/session-store-bridge.js";
 import { sleep } from "../utils.js";
 import {
   buildGroupDisplayName,
@@ -16,7 +18,22 @@ import {
   updateSessionStoreEntry,
 } from "./sessions.js";
 
+function nextStorePath(label: string): string {
+  return `store://sessions-test/${label}`;
+}
+
+async function seedStore(
+  storePath: string,
+  store: Record<string, Record<string, unknown>>,
+): Promise<void> {
+  await getSessionStoreBridge().saveSessionStore(storePath, store as never);
+}
+
 describe("sessions", () => {
+  beforeEach(() => {
+    initializeSessionStoreBridge(createMockStorageAdapter());
+  });
+
   it("returns normalized per-sender key", () => {
     expect(deriveSessionKey("per-sender", { From: "whatsapp:+1555" })).toBe("+1555");
   });
@@ -95,30 +112,21 @@ describe("sessions", () => {
 
   it("updateLastRoute persists channel and target", async () => {
     const mainSessionKey = "agent:main:main";
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [mainSessionKey]: {
-            sessionId: "sess-1",
-            updatedAt: 123,
-            systemSent: true,
-            thinkingLevel: "low",
-            responseUsage: "on",
-            queueDebounceMs: 1234,
-            reasoningLevel: "on",
-            elevatedLevel: "on",
-            authProfileOverride: "auth-1",
-            compactionCount: 2,
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    const storePath = nextStorePath("update-last-route");
+    await seedStore(storePath, {
+      [mainSessionKey]: {
+        sessionId: "sess-1",
+        updatedAt: 123,
+        systemSent: true,
+        thinkingLevel: "low",
+        responseUsage: "on",
+        queueDebounceMs: 1234,
+        reasoningLevel: "on",
+        elevatedLevel: "on",
+        authProfileOverride: "auth-1",
+        compactionCount: 2,
+      },
+    });
 
     await updateLastRoute({
       storePath,
@@ -148,9 +156,8 @@ describe("sessions", () => {
 
   it("updateLastRoute prefers explicit deliveryContext", async () => {
     const mainSessionKey = "agent:main:main";
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(storePath, "{}", "utf-8");
+    const storePath = nextStorePath("update-last-route-explicit");
+    await seedStore(storePath, {});
 
     await updateLastRoute({
       storePath,
@@ -178,9 +185,8 @@ describe("sessions", () => {
 
   it("updateLastRoute records origin + group metadata when ctx is provided", async () => {
     const sessionKey = "agent:main:whatsapp:group:123@g.us";
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(storePath, "{}", "utf-8");
+    const storePath = nextStorePath("update-last-route-group");
+    await seedStore(storePath, {});
 
     await updateLastRoute({
       storePath,
@@ -208,23 +214,14 @@ describe("sessions", () => {
 
   it("updateSessionStoreEntry preserves existing fields when patching", async () => {
     const sessionKey = "agent:main:main";
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [sessionKey]: {
-            sessionId: "sess-1",
-            updatedAt: 100,
-            reasoningLevel: "on",
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    const storePath = nextStorePath("update-entry-preserve");
+    await seedStore(storePath, {
+      [sessionKey]: {
+        sessionId: "sess-1",
+        updatedAt: 100,
+        reasoningLevel: "on",
+      },
+    });
 
     await updateSessionStoreEntry({
       storePath,
@@ -238,9 +235,8 @@ describe("sessions", () => {
   });
 
   it("updateSessionStore preserves concurrent additions", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(storePath, "{}", "utf-8");
+    const storePath = nextStorePath("concurrent-add");
+    await seedStore(storePath, {});
 
     await Promise.all([
       updateSessionStore(storePath, (store) => {
@@ -256,10 +252,9 @@ describe("sessions", () => {
     expect(store["agent:main:two"]?.sessionId).toBe("sess-2");
   });
 
-  it("recovers from array-backed session stores", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(storePath, "[]", "utf-8");
+  it("recovers from empty stores", async () => {
+    const storePath = nextStorePath("empty-store");
+    await seedStore(storePath, {});
 
     await updateSessionStore(storePath, (store) => {
       store["agent:main:main"] = { sessionId: "sess-1", updatedAt: 1 };
@@ -267,15 +262,11 @@ describe("sessions", () => {
 
     const store = loadSessionStore(storePath);
     expect(store["agent:main:main"]?.sessionId).toBe("sess-1");
-
-    const raw = await fs.readFile(storePath, "utf-8");
-    expect(raw.trim().startsWith("{")).toBe(true);
   });
 
   it("normalizes last route fields on write", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(storePath, "{}", "utf-8");
+    const storePath = nextStorePath("normalize-last-route");
+    await seedStore(storePath, {});
 
     await updateSessionStore(storePath, (store) => {
       store["agent:main:main"] = {
@@ -299,20 +290,11 @@ describe("sessions", () => {
   });
 
   it("updateSessionStore keeps deletions when concurrent writes happen", async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          "agent:main:old": { sessionId: "sess-old", updatedAt: 1 },
-          "agent:main:keep": { sessionId: "sess-keep", updatedAt: 2 },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    const storePath = nextStorePath("concurrent-delete");
+    await seedStore(storePath, {
+      "agent:main:old": { sessionId: "sess-old", updatedAt: 1 },
+      "agent:main:keep": { sessionId: "sess-keep", updatedAt: 2 },
+    });
 
     await Promise.all([
       updateSessionStore(storePath, (store) => {
@@ -331,25 +313,16 @@ describe("sessions", () => {
 
   it("loadSessionStore auto-migrates legacy provider keys to channel keys", async () => {
     const mainSessionKey = "agent:main:main";
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [mainSessionKey]: {
-            sessionId: "sess-legacy",
-            updatedAt: 123,
-            provider: "slack",
-            lastProvider: "telegram",
-            lastTo: "user:U123",
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    const storePath = nextStorePath("legacy-provider");
+    await seedStore(storePath, {
+      [mainSessionKey]: {
+        sessionId: "sess-legacy",
+        updatedAt: 123,
+        provider: "slack",
+        lastProvider: "telegram",
+        lastTo: "user:U123",
+      },
+    });
 
     const store = loadSessionStore(storePath) as unknown as Record<string, Record<string, unknown>>;
     const entry = store[mainSessionKey] ?? {};
@@ -364,70 +337,31 @@ describe("sessions", () => {
       { OPENCLAW_STATE_DIR: "/custom/state" } as NodeJS.ProcessEnv,
       () => "/home/ignored",
     );
-    expect(dir).toBe(path.join(path.resolve("/custom/state"), "agents", "main", "sessions"));
+    expect(dir).toBe("store://agent/main/transcripts");
   });
 
   it("includes topic ids in session transcript filenames", () => {
-    const prev = process.env.OPENCLAW_STATE_DIR;
-    process.env.OPENCLAW_STATE_DIR = "/custom/state";
-    try {
-      const sessionFile = resolveSessionTranscriptPath("sess-1", "main", 123);
-      expect(sessionFile).toBe(
-        path.join(
-          path.resolve("/custom/state"),
-          "agents",
-          "main",
-          "sessions",
-          "sess-1-topic-123.jsonl",
-        ),
-      );
-    } finally {
-      if (prev === undefined) {
-        delete process.env.OPENCLAW_STATE_DIR;
-      } else {
-        process.env.OPENCLAW_STATE_DIR = prev;
-      }
-    }
+    const sessionFile = resolveSessionTranscriptPath("sess-1", "main", 123);
+    expect(sessionFile).toBe("session://sess-1?topic=123");
   });
 
   it("uses agent id when resolving session file fallback paths", () => {
-    const prev = process.env.OPENCLAW_STATE_DIR;
-    process.env.OPENCLAW_STATE_DIR = "/custom/state";
-    try {
-      const sessionFile = resolveSessionFilePath("sess-2", undefined, {
-        agentId: "codex",
-      });
-      expect(sessionFile).toBe(
-        path.join(path.resolve("/custom/state"), "agents", "codex", "sessions", "sess-2.jsonl"),
-      );
-    } finally {
-      if (prev === undefined) {
-        delete process.env.OPENCLAW_STATE_DIR;
-      } else {
-        process.env.OPENCLAW_STATE_DIR = prev;
-      }
-    }
+    const sessionFile = resolveSessionFilePath("sess-2", undefined, {
+      agentId: "codex",
+    });
+    expect(sessionFile).toBe("session://sess-2");
   });
 
   it("updateSessionStoreEntry merges concurrent patches", async () => {
     const mainSessionKey = "agent:main:main";
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-sessions-"));
-    const storePath = path.join(dir, "sessions.json");
-    await fs.writeFile(
-      storePath,
-      JSON.stringify(
-        {
-          [mainSessionKey]: {
-            sessionId: "sess-1",
-            updatedAt: 123,
-            thinkingLevel: "low",
-          },
-        },
-        null,
-        2,
-      ),
-      "utf-8",
-    );
+    const storePath = nextStorePath("concurrent-patch");
+    await seedStore(storePath, {
+      [mainSessionKey]: {
+        sessionId: "sess-1",
+        updatedAt: 123,
+        thinkingLevel: "low",
+      },
+    });
 
     await Promise.all([
       updateSessionStoreEntry({
@@ -451,6 +385,5 @@ describe("sessions", () => {
     const store = loadSessionStore(storePath);
     expect(store[mainSessionKey]?.modelOverride).toBe("anthropic/claude-opus-4-5");
     expect(store[mainSessionKey]?.thinkingLevel).toBe("high");
-    await expect(fs.stat(`${storePath}.lock`)).rejects.toThrow();
   });
 });

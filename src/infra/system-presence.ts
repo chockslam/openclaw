@@ -43,25 +43,30 @@ function normalizePresenceKey(key: string | undefined): string | undefined {
 }
 
 function resolvePrimaryIPv4(): string | undefined {
-  const nets = os.networkInterfaces();
-  const prefer = ["en0", "eth0"];
-  const pick = (names: string[]) => {
-    for (const name of names) {
-      const list = nets[name];
-      const entry = list?.find((n) => n.family === "IPv4" && !n.internal);
-      if (entry?.address) {
-        return entry.address;
+  try {
+    const nets = os.networkInterfaces();
+    const prefer = ["en0", "eth0"];
+    const pick = (names: string[]) => {
+      for (const name of names) {
+        const list = nets[name];
+        const entry = list?.find((n) => n.family === "IPv4" && !n.internal);
+        if (entry?.address) {
+          return entry.address;
+        }
       }
-    }
-    for (const list of Object.values(nets)) {
-      const entry = list?.find((n) => n.family === "IPv4" && !n.internal);
-      if (entry?.address) {
-        return entry.address;
+      for (const list of Object.values(nets)) {
+        const entry = list?.find((n) => n.family === "IPv4" && !n.internal);
+        if (entry?.address) {
+          return entry.address;
+        }
       }
-    }
-    return undefined;
-  };
-  return pick(prefer) ?? os.hostname();
+      return undefined;
+    };
+    return pick(prefer) ?? os.hostname();
+  } catch {
+    // Some restricted/containerized test runners can throw on networkInterfaces().
+    return os.hostname();
+  }
 }
 
 function initSelfPresence() {

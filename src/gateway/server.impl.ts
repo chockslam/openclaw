@@ -41,7 +41,7 @@ import { startDiagnosticHeartbeat, stopDiagnosticHeartbeat } from "../logging/di
 import { createSubsystemLogger, runtimeForLogger } from "../logging/subsystem.js";
 import { runOnboardingWizard } from "../wizard/onboarding.js";
 import { EnvSecretsProvider } from "./adapters/env-secrets.js";
-import { FileStorageAdapter } from "./adapters/file-storage.js";
+// import { FileStorageAdapter } from "./adapters/file-storage.js"; // Removed
 import { MemoryClusterAdapter } from "./adapters/memory-cluster.js";
 import { TokenAuthProvider } from "./adapters/token-auth.js";
 import { registerChannelInterceptor } from "./channel-interceptor.js";
@@ -80,7 +80,7 @@ import {
   refreshGatewayHealthSnapshot,
 } from "./server/health-state.js";
 import { loadGatewayTlsRuntime } from "./server/tls.js";
-import { initializeSessionStoreBridge } from "./session-store-bridge.js";
+import { getSessionStoreBridge, initializeSessionStoreBridge } from "./session-store-bridge.js";
 
 export { __resetModelCatalogCacheForTest } from "./server-model-catalog.js";
 
@@ -161,7 +161,7 @@ export type GatewayServerOptions = {
   clusterAdapter?: ClusterStateAdapter;
   /**
    * Optional storage adapter for enterprise deployments.
-   * If not provided, defaults to FileStorageAdapter.
+   * Required: legacy file storage has been removed.
    */
   storageAdapter?: StorageAdapter;
   /**
@@ -335,6 +335,10 @@ export async function startGatewayServer(
   const { wizardSessions, findRunningWizard, purgeWizardSession } = createWizardSessionTracker();
 
   const clusterAdapter = opts.clusterAdapter ?? new MemoryClusterAdapter();
+  if (!opts.storageAdapter) {
+    throw new Error("storageAdapter is required: legacy file storage has been removed.");
+  }
+  const runtimeStorageAdapter = opts.storageAdapter;
   const deps = createDefaultDeps();
   let canvasHostServer: CanvasHostServer | null = null;
   const gatewayTls = await loadGatewayTlsRuntime(cfgAtStart.gateway?.tls, log.child("tls"));
@@ -381,7 +385,7 @@ export async function startGatewayServer(
     logHooks,
     logPlugins,
     clusterAdapter,
-    storageAdapter: opts.storageAdapter ?? new FileStorageAdapter(),
+    storageAdapter: runtimeStorageAdapter,
     authProvider: opts.authProvider,
     secretsProvider: opts.secretsProvider ?? new EnvSecretsProvider(),
     customHandlers: opts.customHandlers,
@@ -396,7 +400,8 @@ export async function startGatewayServer(
   }
 
   // Initialize session store bridge with the configured storage adapter
-  initializeSessionStoreBridge(opts.storageAdapter ?? new FileStorageAdapter());
+  initializeSessionStoreBridge(runtimeStorageAdapter);
+  await getSessionStoreBridge().warmStart();
 
   let bonjourStop: (() => Promise<void>) | null = null;
   const nodeRegistry = new NodeRegistry();

@@ -305,6 +305,11 @@ export const dispatchTelegramMessage = async ({
 
   const hasFinalResponse = queuedFinal || sentFallback;
   if (!hasFinalResponse) {
+    logVerbose(
+      `telegram: no final response delivered chatId=${chatId} queuedFinal=${String(
+        queuedFinal,
+      )} delivered=${String(deliveryState.delivered)} skippedNonSilent=${deliveryState.skippedNonSilent}`,
+    );
     if (isGroup && historyKey) {
       clearHistoryEntriesIfEnabled({ historyMap: groupHistories, historyKey, limit: historyLimit });
     }

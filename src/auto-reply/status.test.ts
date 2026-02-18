@@ -1,9 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../config/config.js";
 import { normalizeTestText } from "../../test/helpers/normalize-text.js";
-import { withTempHome } from "../../test/helpers/temp-home.js";
 import {
   buildCommandsMessage,
   buildCommandsMessagePaginated,
@@ -345,66 +342,28 @@ describe("buildStatusMessage", () => {
     expect(text).not.toContain("💵 Cost:");
   });
 
-  it("prefers cached prompt tokens from the session log", async () => {
-    await withTempHome(
-      async (dir) => {
-        vi.resetModules();
-        const { buildStatusMessage: buildStatusMessageDynamic } = await import("./status.js");
-
-        const sessionId = "sess-1";
-        const logPath = path.join(
-          dir,
-          ".openclaw",
-          "agents",
-          "main",
-          "sessions",
-          `${sessionId}.jsonl`,
-        );
-        fs.mkdirSync(path.dirname(logPath), { recursive: true });
-
-        fs.writeFileSync(
-          logPath,
-          [
-            JSON.stringify({
-              type: "message",
-              message: {
-                role: "assistant",
-                model: "claude-opus-4-5",
-                usage: {
-                  input: 1,
-                  output: 2,
-                  cacheRead: 1000,
-                  cacheWrite: 0,
-                  totalTokens: 1003,
-                },
-              },
-            }),
-          ].join("\n"),
-          "utf-8",
-        );
-
-        const text = buildStatusMessageDynamic({
-          agent: {
-            model: "anthropic/claude-opus-4-5",
-            contextTokens: 32_000,
-          },
-          sessionEntry: {
-            sessionId,
-            updatedAt: 0,
-            totalTokens: 3, // would be wrong if cached prompt tokens exist
-            contextTokens: 32_000,
-          },
-          sessionKey: "agent:main:main",
-          sessionScope: "per-sender",
-          queue: { mode: "collect", depth: 0 },
-          includeTranscriptUsage: true,
-          modelAuth: "api-key",
-        });
-
-        expect(normalizeTestText(text)).toContain("Context: 1.0k/32k");
+  it("uses stored session usage when transcript usage is enabled", () => {
+    const text = buildStatusMessage({
+      agent: {
+        model: "anthropic/claude-opus-4-5",
+        contextTokens: 32_000,
       },
-      { prefix: "openclaw-status-" },
-    );
+      sessionEntry: {
+        sessionId: "sess-1",
+        updatedAt: 0,
+        inputTokens: 1,
+        outputTokens: 2,
+        totalTokens: 3,
+        contextTokens: 32_000,
+      },
+      sessionKey: "agent:main:main",
+      sessionScope: "per-sender",
+      queue: { mode: "collect", depth: 0 },
+      includeTranscriptUsage: true,
+      modelAuth: "api-key",
+    });
+
+    expect(normalizeTestText(text)).toContain("Context: 3/32k (0%)");
   });
 });
 

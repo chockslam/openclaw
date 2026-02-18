@@ -18,8 +18,9 @@ Before doing anything else:
 
 1. Read `SOUL.md` — this is who you are
 2. Read `USER.md` — this is who you're helping
-3. Read `memory/YYYY-MM-DD.md` (today + yesterday) for recent context
-4. **If in MAIN SESSION** (direct chat with your human): Also read `MEMORY.md`
+3. Run memory recall first (`memory_search`) for recent context (session transcripts + memory files)
+4. Only open files (`memory_get` / `read`) when they appear in search results
+5. **If in MAIN SESSION** (direct chat with your human): `MEMORY.md` is allowed, but treat it as optional (do not assume it exists)
 
 Don't ask permission. Just do it.
 

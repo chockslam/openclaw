@@ -89,7 +89,7 @@ describe("gateway session utils", () => {
     } as OpenClawConfig;
     const target = resolveGatewaySessionStoreTarget({ cfg, key: "main" });
     expect(target.canonicalKey).toBe("agent:ops:main");
-    expect(target.storeKeys).toEqual(expect.arrayContaining(["agent:ops:main", "main"]));
+    expect(target.storeKeys).toEqual(["agent:ops:main"]);
     expect(target.storePath).toBe(path.resolve(storeTemplate.replace("{agentId}", "ops")));
   });
 });

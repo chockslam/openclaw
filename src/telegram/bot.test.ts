@@ -9,6 +9,7 @@ import {
   listNativeCommandSpecsForConfig,
 } from "../auto-reply/commands-registry.js";
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
+import { saveSessionStore } from "../config/sessions.js";
 import { createTelegramBot, getTelegramSequentialKey } from "./bot.js";
 import { resolveTelegramFetch } from "./fetch.js";
 
@@ -1177,13 +1178,13 @@ describe("createTelegramBot", () => {
     replySpy.mockReset();
     const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-telegram-"));
     const storePath = path.join(storeDir, "sessions.json");
-    fs.writeFileSync(
-      storePath,
-      JSON.stringify({
-        "agent:ops:telegram:group:123": { groupActivation: "always" },
-      }),
-      "utf-8",
-    );
+    await saveSessionStore(storePath, {
+      "agent:ops:telegram:group:123": {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        groupActivation: "always",
+      },
+    });
     loadConfig.mockReturnValue({
       channels: {
         telegram: {

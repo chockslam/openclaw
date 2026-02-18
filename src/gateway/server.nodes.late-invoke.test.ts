@@ -36,8 +36,10 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  ws.close();
-  await server.close();
+  ws?.close();
+  if (server) {
+    await server.close();
+  }
 });
 
 describe("late-arriving invoke results", () => {

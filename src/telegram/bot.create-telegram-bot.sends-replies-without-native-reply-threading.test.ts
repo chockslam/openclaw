@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetInboundDedupe } from "../auto-reply/reply/inbound-dedupe.js";
+import { saveSessionStore } from "../config/sessions.js";
 import { createTelegramBot } from "./bot.js";
 
 const { sessionStorePath } = vi.hoisted(() => ({
@@ -335,13 +336,13 @@ describe("createTelegramBot", () => {
     replySpy.mockReset();
     const storeDir = fs.mkdtempSync(path.join(os.tmpdir(), "openclaw-telegram-"));
     const storePath = path.join(storeDir, "sessions.json");
-    fs.writeFileSync(
-      storePath,
-      JSON.stringify({
-        "agent:ops:telegram:group:123": { groupActivation: "always" },
-      }),
-      "utf-8",
-    );
+    await saveSessionStore(storePath, {
+      "agent:ops:telegram:group:123": {
+        sessionId: "sid",
+        updatedAt: Date.now(),
+        groupActivation: "always",
+      },
+    });
     loadConfig.mockReturnValue({
       channels: {
         telegram: {

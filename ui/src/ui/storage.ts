@@ -47,14 +47,21 @@ export function loadSettings(): UiSettings {
           : defaults.gatewayUrl,
       token: typeof parsed.token === "string" ? parsed.token : defaults.token,
       sessionKey:
-        typeof parsed.sessionKey === "string" && parsed.sessionKey.trim()
+        typeof parsed.sessionKey === "string" &&
+          parsed.sessionKey.trim() &&
+          parsed.sessionKey.trim() !== "undefined"
           ? parsed.sessionKey.trim()
           : defaults.sessionKey,
       lastActiveSessionKey:
-        typeof parsed.lastActiveSessionKey === "string" && parsed.lastActiveSessionKey.trim()
+        typeof parsed.lastActiveSessionKey === "string" &&
+          parsed.lastActiveSessionKey.trim() &&
+          parsed.lastActiveSessionKey.trim() !== "undefined"
           ? parsed.lastActiveSessionKey.trim()
-          : (typeof parsed.sessionKey === "string" && parsed.sessionKey.trim()) ||
-            defaults.lastActiveSessionKey,
+          : (typeof parsed.sessionKey === "string" &&
+            parsed.sessionKey.trim() &&
+            parsed.sessionKey.trim() !== "undefined" &&
+            parsed.sessionKey.trim()) ||
+          defaults.lastActiveSessionKey,
       theme:
         parsed.theme === "light" || parsed.theme === "dark" || parsed.theme === "system"
           ? parsed.theme
@@ -67,8 +74,8 @@ export function loadSettings(): UiSettings {
           : defaults.chatShowThinking,
       splitRatio:
         typeof parsed.splitRatio === "number" &&
-        parsed.splitRatio >= 0.4 &&
-        parsed.splitRatio <= 0.7
+          parsed.splitRatio >= 0.4 &&
+          parsed.splitRatio <= 0.7
           ? parsed.splitRatio
           : defaults.splitRatio,
       navCollapsed:

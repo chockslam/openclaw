@@ -2,6 +2,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
+import { saveSessionStore } from "./store.js";
 import {
   appendAssistantMessageToSessionTranscript,
   resolveMirroredTranscriptText,
@@ -63,7 +65,6 @@ describe("appendAssistantMessageToSessionTranscript", () => {
   });
 
   it("returns error for unknown sessionKey", async () => {
-    fs.writeFileSync(storePath, JSON.stringify({}), "utf-8");
     const result = await appendAssistantMessageToSessionTranscript({
       sessionKey: "nonexistent",
       text: "test message",
@@ -85,7 +86,7 @@ describe("appendAssistantMessageToSessionTranscript", () => {
         channel: "discord",
       },
     };
-    fs.writeFileSync(storePath, JSON.stringify(store), "utf-8");
+    await saveSessionStore(storePath, store);
 
     const result = await appendAssistantMessageToSessionTranscript({
       sessionKey,
@@ -95,20 +96,20 @@ describe("appendAssistantMessageToSessionTranscript", () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(fs.existsSync(result.sessionFile)).toBe(true);
-
-      const lines = fs.readFileSync(result.sessionFile, "utf-8").trim().split("\n");
-      expect(lines.length).toBe(2); // header + message
-
-      const header = JSON.parse(lines[0]);
-      expect(header.type).toBe("session");
-      expect(header.id).toBe(sessionId);
-
-      const messageLine = JSON.parse(lines[1]);
+      expect(result.sessionFile).toContain(sessionId);
+      const events = await getSessionStoreBridge().readTranscriptEvents({
+        sessionId,
+        order: "asc",
+      });
+      expect(events.length).toBe(1);
+      const messageLine = events[0]?.raw as {
+        type?: string;
+        message?: { role?: string; content?: Array<{ type?: string; text?: string }> };
+      };
       expect(messageLine.type).toBe("message");
-      expect(messageLine.message.role).toBe("assistant");
-      expect(messageLine.message.content[0].type).toBe("text");
-      expect(messageLine.message.content[0].text).toBe("Hello from delivery mirror!");
+      expect(messageLine.message?.role).toBe("assistant");
+      expect(messageLine.message?.content?.[0]?.type).toBe("text");
+      expect(messageLine.message?.content?.[0]?.text).toBe("Hello from delivery mirror!");
     }
   });
 });

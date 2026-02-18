@@ -19,9 +19,57 @@ const ALLOWED_INVALID_GATEWAY_SUBCOMMANDS = new Set([
   "restart",
 ]);
 let didRunDoctorConfigFlow = false;
+let didInitializeCliSessionBridge = false;
+let sessionBridgeInitPromise: Promise<void> | null = null;
+const SESSION_BRIDGE_REQUIRED_COMMANDS = new Set([
+  "agent",
+  "health",
+  "message",
+  "sandbox",
+  "sessions",
+  "status",
+]);
 
 function formatConfigIssues(issues: Array<{ path: string; message: string }>): string[] {
   return issues.map((issue) => `- ${issue.path || "<root>"}: ${issue.message}`);
+}
+
+function commandNeedsSessionBridge(commandPath?: string[]): boolean {
+  const commandName = commandPath?.[0];
+  if (!commandName) {
+    return false;
+  }
+  return SESSION_BRIDGE_REQUIRED_COMMANDS.has(commandName);
+}
+
+async function ensureCliSessionBridgeReady(commandPath?: string[]): Promise<void> {
+  if (!commandNeedsSessionBridge(commandPath)) {
+    return;
+  }
+  if (didInitializeCliSessionBridge) {
+    return;
+  }
+  if (!sessionBridgeInitPromise) {
+    sessionBridgeInitPromise = (async () => {
+      const [
+        { createRuntimeStorageAdapter },
+        { getSessionStoreBridge, initializeSessionStoreBridge },
+      ] = await Promise.all([
+        import("../../gateway/adapters/runtime-storage.js"),
+        import("../../gateway/session-store-bridge.js"),
+      ]);
+      const storageAdapter = await createRuntimeStorageAdapter();
+      initializeSessionStoreBridge(storageAdapter);
+      await getSessionStoreBridge().warmStart();
+      didInitializeCliSessionBridge = true;
+    })();
+  }
+  try {
+    await sessionBridgeInitPromise;
+  } catch (err) {
+    sessionBridgeInitPromise = null;
+    throw err;
+  }
 }
 
 export async function ensureConfigReady(params: {
@@ -52,7 +100,16 @@ export async function ensureConfigReady(params: {
       : [];
 
   const invalid = snapshot.exists && !snapshot.valid;
+  const ensureSessionBridgeOrExit = async (errorFormatter: (value: string) => string) => {
+    await ensureCliSessionBridgeReady(params.commandPath).catch((err) => {
+      const message = err instanceof Error ? err.message : String(err);
+      params.runtime.error(errorFormatter(`Session storage bootstrap failed: ${message}`));
+      params.runtime.exit(1);
+    });
+  };
+
   if (!invalid) {
+    await ensureSessionBridgeOrExit((value) => value);
     return;
   }
 
@@ -78,5 +135,8 @@ export async function ensureConfigReady(params: {
   );
   if (!allowInvalid) {
     params.runtime.exit(1);
+    return;
   }
+
+  await ensureSessionBridgeOrExit(error);
 }

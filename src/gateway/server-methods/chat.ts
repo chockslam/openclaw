@@ -1,7 +1,4 @@
-import { CURRENT_SESSION_VERSION } from "@mariozechner/pi-coding-agent";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
-import path from "node:path";
 import type { MsgContext } from "../../auto-reply/templating.js";
 import type { GatewayRequestContext, GatewayRequestHandlers } from "./types.js";
 import { resolveSessionAgentId } from "../../agents/agent-scope.js";
@@ -34,115 +31,18 @@ import {
   validateChatSendParams,
 } from "../protocol/index.js";
 import { getMaxChatHistoryMessagesBytes } from "../server-constants.js";
+import { getSessionStoreBridge } from "../session-store-bridge.js";
+import {
+  appendAssistantTranscriptMessage,
+  appendUserTranscriptMessage,
+} from "../session-transcript.js";
 import {
   capArrayByJsonBytes,
-  loadSessionEntry,
-  readSessionMessages,
+  loadSessionEntryAsync,
   resolveSessionModelRef,
 } from "../session-utils.js";
 import { formatForLog } from "../ws-log.js";
 import { injectTimestamp, timestampOptsFromConfig } from "./agent-timestamp.js";
-
-type TranscriptAppendResult = {
-  ok: boolean;
-  messageId?: string;
-  message?: Record<string, unknown>;
-  error?: string;
-};
-
-function resolveTranscriptPath(params: {
-  sessionId: string;
-  storePath: string | undefined;
-  sessionFile?: string;
-}): string | null {
-  const { sessionId, storePath, sessionFile } = params;
-  if (sessionFile) {
-    return sessionFile;
-  }
-  if (!storePath) {
-    return null;
-  }
-  return path.join(path.dirname(storePath), `${sessionId}.jsonl`);
-}
-
-function ensureTranscriptFile(params: { transcriptPath: string; sessionId: string }): {
-  ok: boolean;
-  error?: string;
-} {
-  if (fs.existsSync(params.transcriptPath)) {
-    return { ok: true };
-  }
-  try {
-    fs.mkdirSync(path.dirname(params.transcriptPath), { recursive: true });
-    const header = {
-      type: "session",
-      version: CURRENT_SESSION_VERSION,
-      id: params.sessionId,
-      timestamp: new Date().toISOString(),
-      cwd: process.cwd(),
-    };
-    fs.writeFileSync(params.transcriptPath, `${JSON.stringify(header)}\n`, "utf-8");
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function appendAssistantTranscriptMessage(params: {
-  message: string;
-  label?: string;
-  sessionId: string;
-  storePath: string | undefined;
-  sessionFile?: string;
-  createIfMissing?: boolean;
-}): TranscriptAppendResult {
-  const transcriptPath = resolveTranscriptPath({
-    sessionId: params.sessionId,
-    storePath: params.storePath,
-    sessionFile: params.sessionFile,
-  });
-  if (!transcriptPath) {
-    return { ok: false, error: "transcript path not resolved" };
-  }
-
-  if (!fs.existsSync(transcriptPath)) {
-    if (!params.createIfMissing) {
-      return { ok: false, error: "transcript file not found" };
-    }
-    const ensured = ensureTranscriptFile({
-      transcriptPath,
-      sessionId: params.sessionId,
-    });
-    if (!ensured.ok) {
-      return { ok: false, error: ensured.error ?? "failed to create transcript file" };
-    }
-  }
-
-  const now = Date.now();
-  const messageId = randomUUID().slice(0, 8);
-  const labelPrefix = params.label ? `[${params.label}]\n\n` : "";
-  const messageBody: Record<string, unknown> = {
-    role: "assistant",
-    content: [{ type: "text", text: `${labelPrefix}${params.message}` }],
-    timestamp: now,
-    stopReason: "injected",
-    usage: { input: 0, output: 0, totalTokens: 0 },
-  };
-  const transcriptEntry = {
-    type: "message",
-    id: messageId,
-    timestamp: new Date(now).toISOString(),
-    message: messageBody,
-  };
-
-  try {
-    fs.appendFileSync(transcriptPath, `${JSON.stringify(transcriptEntry)}\n`, "utf-8");
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  return { ok: true, messageId, message: transcriptEntry.message };
-}
 
 function nextChatSeq(context: { agentRunSeq: Map<string, number> }, runId: string) {
   const next = (context.agentRunSeq.get(runId) ?? 0) + 1;
@@ -203,15 +103,27 @@ export const chatHandlers: GatewayRequestHandlers = {
       sessionKey: string;
       limit?: number;
     };
-    const { cfg, storePath, entry } = loadSessionEntry(sessionKey);
+    const { cfg, storePath, entry } = await loadSessionEntryAsync(sessionKey);
     const sessionId = entry?.sessionId;
-    const rawMessages =
-      sessionId && storePath ? readSessionMessages(sessionId, storePath, entry?.sessionFile) : [];
     const hardMax = 1000;
     const defaultLimit = 200;
     const requested = typeof limit === "number" ? limit : defaultLimit;
     const max = Math.min(hardMax, requested);
-    const sliced = rawMessages.length > max ? rawMessages.slice(-max) : rawMessages;
+    const sessionAgentId = resolveSessionAgentId({
+      sessionKey,
+      config: cfg,
+    });
+    const rawMessages = sessionId
+      ? await getSessionStoreBridge().readTranscriptMessages({
+          sessionId,
+          sessionFile: entry?.sessionFile,
+          storePath,
+          agentId: sessionAgentId,
+          order: "desc",
+          limit: max,
+        })
+      : [];
+    const sliced = rawMessages.toReversed();
     const sanitized = stripEnvelopeFromMessages(sliced);
     const capped = capArrayByJsonBytes(sanitized, getMaxChatHistoryMessagesBytes()).items;
     let thinkingLevel = entry?.thinkingLevel;
@@ -325,6 +237,11 @@ export const chatHandlers: GatewayRequestHandlers = {
       timeoutMs?: number;
       idempotencyKey: string;
     };
+    /*
+     * [x] Check `dispatch-from-config.ts` for message persistence
+     * [ ] Check `ChatImageContent` structure
+     * [ ] Check logs for any ignored write attempts
+     */
     const stopCommand = isChatStopCommandText(p.message);
     const normalizedAttachments =
       p.attachments
@@ -368,7 +285,7 @@ export const chatHandlers: GatewayRequestHandlers = {
         return;
       }
     }
-    const { cfg, entry } = loadSessionEntry(p.sessionKey);
+    const { cfg, storePath, entry } = await loadSessionEntryAsync(p.sessionKey);
     const timeoutMs = resolveAgentTimeoutMs({
       cfg,
       overrideMs: p.timeoutMs,
@@ -476,6 +393,24 @@ export const chatHandlers: GatewayRequestHandlers = {
         sessionKey: p.sessionKey,
         config: cfg,
       });
+
+      // Persist user message to transcript (Postgres/File)
+      // This ensures we have a record of the user's input before the agent runs.
+      const sessionId = entry?.sessionId ?? clientRunId;
+      console.log(
+        `[Chat] Appending user message to transcript: sessionId=${sessionId}, storePath=${storePath || "undefined"}`,
+      );
+      const appendResult = await appendUserTranscriptMessage({
+        message: parsedMessage,
+        images: parsedImages,
+        sessionId,
+        storePath,
+        agentId,
+        sessionFile: entry?.sessionFile,
+        createIfMissing: true,
+      });
+      console.log(`[Chat] User message append result: ${JSON.stringify(appendResult)}`);
+
       let prefixContext: ResponsePrefixContext = {
         identityName: resolveIdentityName(cfg, agentId),
       };
@@ -520,7 +455,7 @@ export const chatHandlers: GatewayRequestHandlers = {
           },
         },
       })
-        .then(() => {
+        .then(async () => {
           if (!agentRunStarted) {
             const combinedReply = finalReplyParts
               .map((part) => part.trim())
@@ -529,14 +464,14 @@ export const chatHandlers: GatewayRequestHandlers = {
               .trim();
             let message: Record<string, unknown> | undefined;
             if (combinedReply) {
-              const { storePath: latestStorePath, entry: latestEntry } = loadSessionEntry(
-                p.sessionKey,
-              );
+              const { storePath: latestStorePath, entry: latestEntry } =
+                await loadSessionEntryAsync(p.sessionKey);
               const sessionId = latestEntry?.sessionId ?? entry?.sessionId ?? clientRunId;
-              const appended = appendAssistantTranscriptMessage({
+              const appended = await appendAssistantTranscriptMessage({
                 message: combinedReply,
                 sessionId,
                 storePath: latestStorePath,
+                agentId,
                 sessionFile: latestEntry?.sessionFile,
                 createIfMissing: true,
               });
@@ -628,70 +563,44 @@ export const chatHandlers: GatewayRequestHandlers = {
       label?: string;
     };
 
-    // Load session to find transcript file
-    const { storePath, entry } = loadSessionEntry(p.sessionKey);
+    const { cfg, storePath, entry } = await loadSessionEntryAsync(p.sessionKey);
     const sessionId = entry?.sessionId;
-    if (!sessionId || !storePath) {
+    if (!sessionId) {
       respond(false, undefined, errorShape(ErrorCodes.INVALID_REQUEST, "session not found"));
       return;
     }
-
-    // Resolve transcript path
-    const transcriptPath = entry?.sessionFile
-      ? entry.sessionFile
-      : path.join(path.dirname(storePath), `${sessionId}.jsonl`);
-
-    if (!fs.existsSync(transcriptPath)) {
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.INVALID_REQUEST, "transcript file not found"),
-      );
-      return;
-    }
-
-    // Build transcript entry
-    const now = Date.now();
-    const messageId = randomUUID().slice(0, 8);
-    const labelPrefix = p.label ? `[${p.label}]\n\n` : "";
-    const messageBody: Record<string, unknown> = {
-      role: "assistant",
-      content: [{ type: "text", text: `${labelPrefix}${p.message}` }],
-      timestamp: now,
-      stopReason: "injected",
-      usage: { input: 0, output: 0, totalTokens: 0 },
-    };
-    const transcriptEntry = {
-      type: "message",
-      id: messageId,
-      timestamp: new Date(now).toISOString(),
-      message: messageBody,
-    };
-
-    // Append to transcript file
-    try {
-      fs.appendFileSync(transcriptPath, `${JSON.stringify(transcriptEntry)}\n`, "utf-8");
-    } catch (err) {
-      const errMessage = err instanceof Error ? err.message : String(err);
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, `failed to write transcript: ${errMessage}`),
-      );
+    const agentId = resolveSessionAgentId({
+      sessionKey: p.sessionKey,
+      config: cfg,
+    });
+    const appended = await appendAssistantTranscriptMessage({
+      message: p.message,
+      label: p.label,
+      sessionId,
+      storePath,
+      agentId,
+      sessionFile: entry?.sessionFile,
+      createIfMissing: false,
+    });
+    if (!appended.ok) {
+      const code = appended.error?.includes("not found")
+        ? ErrorCodes.INVALID_REQUEST
+        : ErrorCodes.UNAVAILABLE;
+      respond(false, undefined, errorShape(code, appended.error ?? "failed to write transcript"));
       return;
     }
 
     // Broadcast to webchat for immediate UI update
     const chatPayload = {
-      runId: `inject-${messageId}`,
+      runId: `inject-${appended.messageId}`,
       sessionKey: p.sessionKey,
       seq: 0,
       state: "final" as const,
-      message: transcriptEntry.message,
+      message: appended.message,
     };
     context.broadcast("chat", chatPayload);
     context.nodeSendToSession(p.sessionKey, "chat", chatPayload);
 
-    respond(true, { ok: true, messageId });
+    respond(true, { ok: true, messageId: appended.messageId });
   },
 };

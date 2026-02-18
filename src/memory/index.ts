@@ -1,4 +1,5 @@
 export { MemoryIndexManager } from "./manager.js";
+export { PostgresMemoryIndexManager } from "./manager-postgres.js";
 export type {
   MemoryEmbeddingProbeResult,
   MemorySearchManager,

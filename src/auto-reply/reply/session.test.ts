@@ -4,23 +4,13 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { OpenClawConfig } from "../../config/config.js";
 import { saveSessionStore } from "../../config/sessions.js";
+import { getSessionStoreBridge } from "../../gateway/session-store-bridge.js";
 import { initSessionState } from "./session.js";
 
 describe("initSessionState thread forking", () => {
   it("forks a new session from the parent session file", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-thread-session-"));
-    const sessionsDir = path.join(root, "sessions");
-    await fs.mkdir(sessionsDir, { recursive: true });
-
     const parentSessionId = "parent-session";
-    const parentSessionFile = path.join(sessionsDir, "parent.jsonl");
-    const header = {
-      type: "session",
-      version: 3,
-      id: parentSessionId,
-      timestamp: new Date().toISOString(),
-      cwd: process.cwd(),
-    };
     const message = {
       type: "message",
       id: "m1",
@@ -28,18 +18,18 @@ describe("initSessionState thread forking", () => {
       timestamp: new Date().toISOString(),
       message: { role: "user", content: "Parent prompt" },
     };
-    await fs.writeFile(
-      parentSessionFile,
-      `${JSON.stringify(header)}\n${JSON.stringify(message)}\n`,
-      "utf-8",
-    );
 
     const storePath = path.join(root, "sessions.json");
+    await getSessionStoreBridge().appendTranscriptEvent({
+      sessionId: parentSessionId,
+      storePath,
+      event: message as Record<string, unknown>,
+      createIfMissing: true,
+    });
     const parentSessionKey = "agent:main:slack:channel:c1";
     await saveSessionStore(storePath, {
       [parentSessionKey]: {
         sessionId: parentSessionId,
-        sessionFile: parentSessionFile,
         updatedAt: Date.now(),
       },
     });
@@ -63,20 +53,13 @@ describe("initSessionState thread forking", () => {
 
     expect(result.sessionKey).toBe(threadSessionKey);
     expect(result.sessionEntry.sessionId).not.toBe(parentSessionId);
-    expect(result.sessionEntry.sessionFile).toBeTruthy();
     expect(result.sessionEntry.displayName).toBe(threadLabel);
-
-    const newSessionFile = result.sessionEntry.sessionFile;
-    if (!newSessionFile) {
-      throw new Error("Missing session file for forked thread");
-    }
-    const [headerLine] = (await fs.readFile(newSessionFile, "utf-8"))
-      .split(/\r?\n/)
-      .filter((line) => line.trim().length > 0);
-    const parsedHeader = JSON.parse(headerLine) as {
-      parentSession?: string;
-    };
-    expect(parsedHeader.parentSession).toBe(parentSessionFile);
+    expect(result.sessionEntry.forkedFromSessionId).toBe(parentSessionId);
+    const childEvents = await getSessionStoreBridge().readTranscriptMessages({
+      sessionId: result.sessionEntry.sessionId,
+      order: "asc",
+    });
+    expect(childEvents).toEqual([message.message]);
   });
 
   it("records topic-specific session files when MessageThreadId is present", async () => {
@@ -97,11 +80,9 @@ describe("initSessionState thread forking", () => {
       commandAuthorized: true,
     });
 
-    const sessionFile = result.sessionEntry.sessionFile;
-    expect(sessionFile).toBeTruthy();
-    expect(path.basename(sessionFile ?? "")).toBe(
-      `${result.sessionEntry.sessionId}-topic-456.jsonl`,
-    );
+    expect(result.sessionKey).toBe("agent:main:telegram:group:123:topic:456");
+    expect(result.sessionEntry.sessionId).toBeTruthy();
+    expect(result.sessionEntry.sessionFile).toBeUndefined();
   });
 });
 

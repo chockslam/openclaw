@@ -2,9 +2,6 @@
  * LLM-based slug generator for session memory filenames
  */
 
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
 import type { OpenClawConfig } from "../config/config.js";
 import {
   resolveDefaultAgentId,
@@ -20,16 +17,11 @@ export async function generateSlugViaLLM(params: {
   sessionContent: string;
   cfg: OpenClawConfig;
 }): Promise<string | null> {
-  let tempSessionFile: string | null = null;
-
   try {
     const agentId = resolveDefaultAgentId(params.cfg);
     const workspaceDir = resolveAgentWorkspaceDir(params.cfg, agentId);
     const agentDir = resolveAgentDir(params.cfg, agentId);
-
-    // Create a temporary session file for this one-off LLM call
-    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "openclaw-slug-"));
-    tempSessionFile = path.join(tempDir, "session.jsonl");
+    const tempSessionFile = `session://slug-generator-${Date.now()}`;
 
     const prompt = `Based on this conversation, generate a short 1-2 word filename slug (lowercase, hyphen-separated, no file extension).
 
@@ -71,14 +63,5 @@ Reply with ONLY the slug, nothing else. Examples: "vendor-pitch", "api-design", 
   } catch (err) {
     console.error("[llm-slug-generator] Failed to generate slug:", err);
     return null;
-  } finally {
-    // Clean up temporary session file
-    if (tempSessionFile) {
-      try {
-        await fs.rm(path.dirname(tempSessionFile), { recursive: true, force: true });
-      } catch {
-        // Ignore cleanup errors
-      }
-    }
   }
 }
